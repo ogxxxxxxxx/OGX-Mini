@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "USBDevice/DeviceDriver/DeviceDriver.h"
-#include "Descriptors/PS4.h"
+#include "Descriptors/PS4Device.h"
 
 class PS4Device : public DeviceDriver
 {
@@ -37,8 +37,8 @@ public:
     const uint8_t* get_descriptor_device_qualifier_cb() override;
 
 private:
-    PS4::InReport  report_in_;
-    PS4::OutReport report_out_;   // por si más adelante quieres rumble, etc.
+    PS4_DEV::InReport  report_in_;
+    PS4_DEV::OutReport report_out_;
 };
 
 #endif // _PS4_DEVICE_H_
