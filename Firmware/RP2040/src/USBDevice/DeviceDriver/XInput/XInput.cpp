@@ -16,43 +16,49 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
     // ---------- ESTADO ESTÁTICO PARA MACROS / TIEMPOS ----------
     static absolute_time_t shot_start_time;
-    static bool is_shooting = false;
+    static bool            is_shooting = false;
 
     // Macro L1 (spam jump)
-    static bool           jump_macro_active = false;
+    static bool            jump_macro_active = false;
     static absolute_time_t jump_end_time;
-    static uint64_t       last_tap_time = 0;
-    static bool           tap_state    = false;
+    static uint64_t        last_tap_time = 0;
+    static bool            tap_state    = false;
 
     if (gamepad.new_pad_in())
     {
-        // Limpia botones del reporte
-        in_report_.buttons[0] = 0;
-        in_report_.buttons[1] = 0;
+        // Reiniciamos TODO el in_report_ (incluye report_size correcto)
+        in_report_ = XInput::InReport{};
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
         const uint16_t btn    = gp_in.buttons;
 
-        // ---------- 1. HAIR TRIGGERS ----------
-        uint8_t final_trig_l = (gp_in.trigger_l > 5) ? 255 : 0;
-        uint8_t final_trig_r = (gp_in.trigger_r > 5) ? 255 : 0;
+        // ---------- 1. HAIR TRIGGERS (cualquier valor cuenta) ----------
+        // Da igual si trigger_l/r es 0/1 o 0–255, aquí se fuerzan a 0 o 255
+        const bool trig_l_pressed = (gp_in.trigger_l != 0);
+        const bool trig_r_pressed = (gp_in.trigger_r != 0);
 
-        // ---------- 2. AIM ASSIST (JITTER STICK IZQUIERDO) ----------
-        int8_t stick_l_x = gp_in.joystick_lx;
-        int8_t stick_l_y = gp_in.joystick_ly;
+        uint8_t final_trig_l = trig_l_pressed ? 255 : 0;
+        uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
-        if (final_trig_l > 50 || final_trig_r > 50)
+        // ---------- 2. STICKS BASE (int16, como el original) ----------
+        int16_t stick_l_x = gp_in.joystick_lx;
+        int16_t stick_l_y = gp_in.joystick_ly;
+        int16_t stick_r_x = gp_in.joystick_rx;
+        int16_t stick_r_y = gp_in.joystick_ry;
+
+        // ---------- 3. AIM ASSIST (JITTER STICK IZQUIERDO) ----------
+        if (final_trig_l || final_trig_r)
         {
-            int8_t jitter_x = (rand() % 9) - 4;  // -4..+4
-            int8_t jitter_y = (rand() % 9) - 4;
-            stick_l_x = Range::clamp(stick_l_x + jitter_x, -128, 127);
-            stick_l_y = Range::clamp(stick_l_y + jitter_y, -128, 127);
+            // Pequeño jitter -4..+4, como teníamos antes
+            int16_t jitter_x = static_cast<int16_t>((rand() % 9) - 4);
+            int16_t jitter_y = static_cast<int16_t>((rand() % 9) - 4);
+
+            stick_l_x += jitter_x;
+            stick_l_y += jitter_y;
         }
 
-        // ---------- 3. ANTI-RECOIL DINÁMICO (STICK DERECHO Y) ----------
-        int8_t stick_r_y = gp_in.joystick_ry;
-
-        if (final_trig_r > 50)
+        // ---------- 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y) ----------
+        if (final_trig_r)
         {
             if (!is_shooting)
             {
@@ -61,16 +67,18 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
 
             int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
-            int8_t  recoil_force     = (time_shooting_us < 1000000) ? 25 : 12; // 1s fuerte, luego suave
 
-            stick_r_y = Range::clamp(stick_r_y - recoil_force, -128, 127);
+            // Primer segundo más fuerte, luego más suave (en unidades del stick)
+            int16_t recoil_force = (time_shooting_us < 1000000) ? 25 : 12;
+
+            stick_r_y -= recoil_force;
         }
         else
         {
             is_shooting = false;
         }
 
-        // ---------- 4. DPAD ----------
+        // ---------- 5. DPAD ----------
         switch (gp_in.dpad)
         {
             case Gamepad::DPAD_UP:
@@ -101,8 +109,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 break;
         }
 
-        // ---------- 5. BOTONES BÁSICOS ----------
-        // BACK normal (share físico estándar)
+        // ---------- 6. BOTONES BÁSICOS ----------
+        // BACK normal (Share estándar)
         if (btn & Gamepad::BUTTON_BACK)  in_report_.buttons[0] |= XInput::Buttons0::BACK;
         if (btn & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
         if (btn & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
@@ -116,20 +124,22 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
         if (btn & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // ---------- 6. TOUCHPAD PS5 -> BACK/SELECT EN XINPUT ----------
-        // Asumimos que el click del touchpad del DualSense llega como BUTTON_MISC
+        // ---------- 7. TOUCHPAD PS5 -> BACK/SELECT EN XINPUT ----------
+        // OJO: aquí estamos usando BUTTON_MISC como "click raro" (mute/touch),
+        // *además* de BACK normal. Si el DualSense manda el click por MISC,
+        // esto hará que se vea como SELECT en XInput.
         if (btn & Gamepad::BUTTON_MISC)
         {
             in_report_.buttons[0] |= XInput::Buttons0::BACK;
         }
 
-        // ---------- 7. DROP SHOT (R sin L) ----------
-        if (final_trig_r > 50 && final_trig_l < 50)
+        // ---------- 8. DROP SHOT (R sin L) ----------
+        if (final_trig_r && !final_trig_l)
         {
             in_report_.buttons[1] |= XInput::Buttons1::B;
         }
 
-        // ---------- 8. MACRO L1 (LB) -> SPAM JUMP (A) ----------
+        // ---------- 9. MACRO L1 (LB) -> SPAM JUMP (A) ----------
         if (btn & Gamepad::BUTTON_LB)
         {
             jump_macro_active = true;
@@ -160,15 +170,16 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
         }
 
-        // ---------- 9. ASIGNAR TRIGGERS Y STICKS FINALES ----------
+        // ---------- 10. ASIGNAR TRIGGERS Y STICKS FINALES ----------
         in_report_.trigger_l   = final_trig_l;
         in_report_.trigger_r   = final_trig_r;
+
         in_report_.joystick_lx = stick_l_x;
         in_report_.joystick_ly = Range::invert(stick_l_y);
-        in_report_.joystick_rx = gp_in.joystick_rx;
+        in_report_.joystick_rx = stick_r_x;
         in_report_.joystick_ry = Range::invert(stick_r_y);
 
-        // ---------- 10. ENVIAR REPORTE XINPUT ----------
+        // ---------- 11. ENVIAR REPORTE XINPUT ----------
         if (tud_suspended())
         {
             tud_remote_wakeup();
@@ -177,7 +188,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         tud_xinput::send_report(reinterpret_cast<uint8_t*>(&in_report_), sizeof(XInput::InReport));
     }
 
-    // ---------- 11. RUMBLE (igual que original) ----------
+    // ---------- 12. RUMBLE (igual que original) ----------
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
@@ -188,7 +199,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 }
 
-uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) 
+uint16_t XInputDevice::get_report_cb(uint8_t itf,
+                                     uint8_t report_id,
+                                     hid_report_type_t report_type,
+                                     uint8_t *buffer,
+                                     uint16_t reqlen) 
 {
     (void)itf;
     (void)report_id;
@@ -196,10 +211,14 @@ uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_
     (void)reqlen;
 
     std::memcpy(buffer, &in_report_, sizeof(XInput::InReport));
-	return sizeof(XInput::InReport);
+    return sizeof(XInput::InReport);
 }
 
-void XInputDevice::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) 
+void XInputDevice::set_report_cb(uint8_t itf,
+                                 uint8_t report_id,
+                                 hid_report_type_t report_type,
+                                 uint8_t const *buffer,
+                                 uint16_t bufsize) 
 {
     (void)itf;
     (void)report_id;
@@ -208,7 +227,9 @@ void XInputDevice::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type
     (void)bufsize;
 }
 
-bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) 
+bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
+                                          uint8_t stage,
+                                          tusb_control_request_t const *request) 
 {
     (void)rhport;
     (void)stage;
@@ -219,8 +240,8 @@ bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_co
 const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid) 
 {
     (void)langid;
-	const char *value = reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
-	return get_string_descriptor(value, index);
+    const char *value = reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
+    return get_string_descriptor(value, index);
 }
 
 const uint8_t * XInputDevice::get_descriptor_device_cb() 
@@ -242,5 +263,5 @@ const uint8_t * XInputDevice::get_descriptor_configuration_cb(uint8_t index)
 
 const uint8_t * XInputDevice::get_descriptor_device_qualifier_cb() 
 {
-	return nullptr;
+    return nullptr;
 }
