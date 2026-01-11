@@ -27,6 +27,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     // Auto-detección del bit del TOUCHPAD
     static uint16_t        touchpadMask = 0;
 
+    // Estado para AIM ASSIST (para que sea más lento/suave)
+    static uint64_t        aim_last_time_ms = 0;
+    static int16_t         aim_jitter_x = 0;
+    static int16_t         aim_jitter_y = 0;
+
     if (gamepad.new_pad_in())
     {
         // Reinicia todo el reporte (el ctor pone report_size)
@@ -94,16 +99,32 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         // =========================================================
         // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
-        //    Más suave (≈ 3% del rango)
+        //    Más FUERTE pero MÁS LENTO:
+        //      - jitter ~20% del rango
+        //      - se actualiza cada ~35 ms
         // =========================================================
         if (final_trig_r)   // solo cuando disparas con R2
         {
-            const int16_t JITTER = 1000; // ajusta si lo quieres más fuerte/suave
-            int16_t jitter_x = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
-            int16_t jitter_y = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
+            uint64_t now_ms = to_ms_since_boot(get_absolute_time());
 
-            out_lx = clamp16(out_lx + jitter_x);
-            out_ly = clamp16(out_ly + jitter_y);
+            // Cambiamos el vector de jitter solo cada 35 ms aprox.
+            if (now_ms - aim_last_time_ms > 35)
+            {
+                aim_last_time_ms = now_ms;
+
+                const int16_t JITTER = 6000; // fuerza del aim assist
+                aim_jitter_x = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
+                aim_jitter_y = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
+            }
+
+            out_lx = clamp16(out_lx + aim_jitter_x);
+            out_ly = clamp16(out_ly + aim_jitter_y);
+        }
+        else
+        {
+            // Sin disparar, no queremos jitter
+            aim_jitter_x = 0;
+            aim_jitter_y = 0;
         }
 
         // =========================================================
@@ -111,8 +132,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         //
         //   - Primer segundo: fuerte
         //   - Luego: más suave
-        //   Se suma sobre out_ry (YA invertido), así que tiene que
-        //   mover sí o sí la mira con R2 apretado.
+        //   Antes lo sumábamos con el signo equivocado (subía),
+        //   ahora lo RESTAMOS para que baje la mira.
         // =========================================================
         if (final_trig_r)
         {
@@ -135,8 +156,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                                  ? RECOIL_STRONG
                                  : RECOIL_WEAK;
 
-            // Suponiendo que +Y es “abajo” en el juego
-            out_ry = clamp16(out_ry + recoil_force);
+            // ANTES: out_ry = clamp16(out_ry + recoil_force);  // subía
+            // AHORA: restamos para que empuje hacia ABAJO
+            out_ry = clamp16(out_ry - recoil_force);
         }
         else
         {
@@ -198,7 +220,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
 
         // --- BOTÓN PLAYSTATION (SYS) ---
-        // HOME + D-Pad Izq + Der (lo que querías en las flechas)
+        // HOME + D-Pad Izq + Der
         if (btn & Gamepad::BUTTON_SYS)
         {
             in_report_.buttons[1] |= XInput::Buttons1::HOME;
