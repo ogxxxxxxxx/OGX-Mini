@@ -110,7 +110,7 @@ namespace PS4Dev {
         0x00,        // bDeviceProtocol
         0x40,        // bMaxPacketSize0 (64)
         0x4C, 0x05,  // idVendor 0x054C (Sony)
-        0x01, 0x20,  // idProduct 0x2001 (personalizado)
+        0xC4, 0x05,  // idProduct 0x2001 (personalizado)
         0x00, 0x01,  // bcdDevice
         0x01,        // iManufacturer
         0x02,        // iProduct
