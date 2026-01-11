@@ -88,14 +88,11 @@ namespace PS4Dev
         uint8_t  accel_z_hi;       // acelerómetro Z (high byte)
         
         uint8_t  reserved[5];      // bytes reservados
-        
         uint8_t  ext_status;       // estado extendido
         uint8_t  reserved2[2];
-        
         uint8_t  num_touches;      // número de toques touchpad
         uint8_t  touch_data[9];    // datos del touchpad
-        
-        uint8_t  padding[24];      // padding hasta 64 bytes
+        uint8_t  padding[21];      // padding hasta 64 bytes (ajustado)
 
         InReport()
         {
