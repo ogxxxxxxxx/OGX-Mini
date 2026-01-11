@@ -79,38 +79,42 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
         // =========================================================
-        // 2. STICKS BASE (int16 como el original)
+        // 2. STICKS BASE EN ESPACIO "FINAL" (el que ve el juego)
+        //    - X tal cual
+        //    - Y ya invertido con Range::invert (como hacía el original)
         // =========================================================
-        int16_t stick_l_x = gp_in.joystick_lx;
-        int16_t stick_l_y = gp_in.joystick_ly;
-        int16_t stick_r_x = gp_in.joystick_rx;
-        int16_t stick_r_y = gp_in.joystick_ry;
+        int16_t out_lx = gp_in.joystick_lx;
+        int16_t out_ly = Range::invert(gp_in.joystick_ly);
+        int16_t out_rx = gp_in.joystick_rx;
+        int16_t out_ry = Range::invert(gp_in.joystick_ry);
+
+        auto clamp16 = [](int16_t v) -> int16_t {
+            if (v < -32768) return -32768;
+            if (v >  32767) return  32767;
+            return v;
+        };
 
         // =========================================================
         // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
+        //    - Más suave que antes (~5-6% del rango)
         // =========================================================
         if (final_trig_r)   // solo cuando disparas con R2
         {
-            // Jitter fuerte en escala int16
-            const int16_t JITTER = 6000; // ~20% del rango
+            const int16_t JITTER = 1800; // cambia este valor si quieres más/menos
             int16_t jitter_x = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
             int16_t jitter_y = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
 
-            stick_l_x += jitter_x;
-            stick_l_y += jitter_y;
-
-            if (stick_l_x < -32768) stick_l_x = -32768;
-            if (stick_l_x >  32767) stick_l_x =  32767;
-            if (stick_l_y < -32768) stick_l_y = -32768;
-            if (stick_l_y >  32767) stick_l_y =  32767;
+            out_lx = clamp16(out_lx + jitter_x);
+            out_ly = clamp16(out_ly + jitter_y);
         }
 
         // =========================================================
-        // 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y, CUANDO R2)
+        // 4. ANTI-RECOIL DINÁMICO (EJE Y DERECHO, CUANDO R2)
         //
         //   - Primer segundo: fuerza 25
         //   - Luego: fuerza 12
-        //   (esos "25/12" los multiplicamos a escala int16)
+        //   Aquí lo escala a int16 y lo suma sobre out_ry (YA invertido),
+        //   así que sí o sí tiene que mover la mira hacia abajo.
         // =========================================================
         if (final_trig_r)
         {
@@ -120,19 +124,19 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 shot_start_time = get_absolute_time();
             }
 
-            int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
+            int64_t time_shooting_us = absolute_time_diff_us(shot_start_time,
+                                                             get_absolute_time());
 
-            // Escalamos 25/12 a algo razonable de int16
-            const int16_t RECOIL_STRONG = 25 * 200; // 5000 aprox
-            const int16_t RECOIL_WEAK   = 12 * 200; // 2400 aprox
+            // fuerza en espacio int16
+            const int16_t RECOIL_STRONG = 25 * 120; // ~3000
+            const int16_t RECOIL_WEAK   = 12 * 120; // ~1440
 
             int16_t recoil_force = (time_shooting_us < 1000000)
                                  ? RECOIL_STRONG
                                  : RECOIL_WEAK;
 
-            stick_r_y -= recoil_force;
-            if (stick_r_y < -32768) stick_r_y = -32768;
-            if (stick_r_y >  32767) stick_r_y =  32767;
+            // suponemos que +Y es "abajo" en el juego
+            out_ry = clamp16(out_ry + recoil_force);
         }
         else
         {
@@ -212,7 +216,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // --- MUTE (BUTTON_MISC) → D-PAD IZQ + DER ---
         if (btn & Gamepad::BUTTON_MISC)
         {
-            in_report_.buttons[0] |= (XInput::Buttons0::DPAD_LEFT | XInput::Buttons0::DPAD_RIGHT);
+            in_report_.buttons[0] |= (XInput::Buttons0::DPAD_LEFT |
+                                      XInput::Buttons0::DPAD_RIGHT);
         }
 
         // =========================================================
@@ -261,10 +266,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.trigger_l   = final_trig_l;
         in_report_.trigger_r   = final_trig_r;
 
-        in_report_.joystick_lx = stick_l_x;
-        in_report_.joystick_ly = Range::invert(stick_l_y);
-        in_report_.joystick_rx = stick_r_x;
-        in_report_.joystick_ry = Range::invert(stick_r_y);
+        in_report_.joystick_lx = out_lx;
+        in_report_.joystick_ly = out_ly;
+        in_report_.joystick_rx = out_rx;
+        in_report_.joystick_ry = out_ry;
 
         // =========================================================
         // 10. ENVIAR REPORTE XINPUT
