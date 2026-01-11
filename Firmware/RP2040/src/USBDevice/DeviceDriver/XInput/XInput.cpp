@@ -15,8 +15,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     (void)idx;
 
     // ---------- ESTADO ESTÁTICO PARA MACROS / TIEMPOS ----------
-    static absolute_time_t shot_start_time;
-    static bool            is_shooting = false;
 
     // Macro L1 (spam jump)
     static bool            jump_macro_active = false;
@@ -66,9 +64,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         // =========================================================
         // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
-        //    Fuerte pero más lento:
-        //      - jitter ~20% del rango
-        //      - se actualiza cada ~35 ms
+        //    (versión rápida que tenías ahora; si luego quieres,
+        //     se puede limitar solo cerca del centro otra vez)
         // =========================================================
         if (final_trig_r)   // solo cuando disparas con R2
         {
@@ -95,38 +92,16 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 4. ANTI-RECOIL DINÁMICO (EJE Y DERECHO, CUANDO R2)
+        // 4. ANTI-RECOIL CONSTANTE (EJE Y DERECHO, CUANDO R2)
         //
-        //   - Primer segundo: fuerte
-        //   - Luego: mucho más suave para que no siga bajando tanto
+        //   Siempre la misma fuerza fuerte (12000),
+        //   sin bajar después del primer segundo.
         // =========================================================
         if (final_trig_r)
         {
-            if (!is_shooting)
-            {
-                is_shooting     = true;
-                shot_start_time = get_absolute_time();
-            }
-
-            int64_t time_shooting_us = absolute_time_diff_us(
-                shot_start_time,
-                get_absolute_time()
-            );
-
-            // Fuerza fuerte 1er segundo, luego bastante más pequeña
-            const int16_t RECOIL_STRONG = 12000; // primer segundo
-            const int16_t RECOIL_WEAK   =  3000; // después
-
-            int16_t recoil_force = (time_shooting_us < 1000000)
-                                 ? RECOIL_STRONG
-                                 : RECOIL_WEAK;
-
-            // Restamos para que empuje hacia ABAJO
-            out_ry = clamp16(out_ry - recoil_force);
-        }
-        else
-        {
-            is_shooting = false;
+            const int16_t RECOIL_FORCE = 12000;  // mismo valor siempre
+            // Restamos para empujar la mira hacia ABAJO
+            out_ry = clamp16(out_ry - RECOIL_FORCE);
         }
 
         // =========================================================
