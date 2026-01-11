@@ -28,15 +28,15 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         // --- DPAD -> Hat ---
         switch (gp_in.dpad)
         {
-            case Gamepad::DPAD_UP:          report_in_.hat = PS4Dev::Hat::UP;         break;
-            case Gamepad::DPAD_UP_RIGHT:    report_in_.hat = PS4Dev::Hat::UP_RIGHT;   break;
-            case Gamepad::DPAD_RIGHT:       report_in_.hat = PS4Dev::Hat::RIGHT;      break;
-            case Gamepad::DPAD_DOWN_RIGHT:  report_in_.hat = PS4Dev::Hat::DOWN_RIGHT; break;
-            case Gamepad::DPAD_DOWN:        report_in_.hat = PS4Dev::Hat::DOWN;       break;
-            case Gamepad::DPAD_DOWN_LEFT:   report_in_.hat = PS4Dev::Hat::DOWN_LEFT;  break;
-            case Gamepad::DPAD_LEFT:        report_in_.hat = PS4Dev::Hat::LEFT;       break;
-            case Gamepad::DPAD_UP_LEFT:     report_in_.hat = PS4Dev::Hat::UP_LEFT;    break;
-            default:                        report_in_.hat = PS4Dev::Hat::CENTER;     break;
+            case Gamepad::DPAD_UP:          PS4Dev::setHat(report_in_, PS4Dev::Hat::UP);         break;
+            case Gamepad::DPAD_UP_RIGHT:    PS4Dev::setHat(report_in_, PS4Dev::Hat::UP_RIGHT);   break;
+            case Gamepad::DPAD_RIGHT:       PS4Dev::setHat(report_in_, PS4Dev::Hat::RIGHT);      break;
+            case Gamepad::DPAD_DOWN_RIGHT:  PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN_RIGHT); break;
+            case Gamepad::DPAD_DOWN:        PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN);       break;
+            case Gamepad::DPAD_DOWN_LEFT:   PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN_LEFT);  break;
+            case Gamepad::DPAD_LEFT:        PS4Dev::setHat(report_in_, PS4Dev::Hat::LEFT);       break;
+            case Gamepad::DPAD_UP_LEFT:     PS4Dev::setHat(report_in_, PS4Dev::Hat::UP_LEFT);    break;
+            default:                        PS4Dev::setHat(report_in_, PS4Dev::Hat::CENTER);     break;
         }
 
         // --- Botones ---
@@ -60,7 +60,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_SYS)   buttons |= PS4Dev::Buttons::PS;
         if (gp_in.buttons & Gamepad::BUTTON_MISC)  buttons |= PS4Dev::Buttons::CROSS;
 
-        report_in_.buttons = buttons;
+        PS4Dev::setButtons(report_in_, buttons);
 
         // --- Sticks (0–255) ---
         report_in_.joystick_lx = Scale::int16_to_uint8(gp_in.joystick_lx);
@@ -155,6 +155,3 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
-
-
-
