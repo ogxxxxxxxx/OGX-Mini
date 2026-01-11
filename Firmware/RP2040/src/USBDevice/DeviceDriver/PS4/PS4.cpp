@@ -26,98 +26,80 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     {
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
 
-        // Resetea a estado neutro
-        report_in_ = PS4Dev::InReport{};
+        // Limpia y deja todo en neutro
+        std::memset(&report_in_, 0, sizeof(report_in_));
 
-        // --------------------------------------------------------------------
-        // DPAD -> Hat
-        // --------------------------------------------------------------------
+        // Report ID 1 (coincide con 0x85,0x01 del descriptor HID)
+        report_in_.reportID = 0x01;
+
+        // Sticks analógicos (0-255)
+        report_in_.leftStickX  = Scale::int16_to_uint8(gp_in.joystick_lx);
+        report_in_.leftStickY  = Scale::int16_to_uint8(gp_in.joystick_ly);
+        report_in_.rightStickX = Scale::int16_to_uint8(gp_in.joystick_rx);
+        report_in_.rightStickY = Scale::int16_to_uint8(gp_in.joystick_ry);
+
+        // D-Pad → HAT en 4 bits
         switch (gp_in.dpad)
         {
-            case Gamepad::DPAD_UP:          PS4Dev::setHat(report_in_, PS4Dev::Hat::UP);         break;
-            case Gamepad::DPAD_UP_RIGHT:    PS4Dev::setHat(report_in_, PS4Dev::Hat::UP_RIGHT);   break;
-            case Gamepad::DPAD_RIGHT:       PS4Dev::setHat(report_in_, PS4Dev::Hat::RIGHT);      break;
-            case Gamepad::DPAD_DOWN_RIGHT:  PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN_RIGHT); break;
-            case Gamepad::DPAD_DOWN:        PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN);       break;
-            case Gamepad::DPAD_DOWN_LEFT:   PS4Dev::setHat(report_in_, PS4Dev::Hat::DOWN_LEFT);  break;
-            case Gamepad::DPAD_LEFT:        PS4Dev::setHat(report_in_, PS4Dev::Hat::LEFT);       break;
-            case Gamepad::DPAD_UP_LEFT:     PS4Dev::setHat(report_in_, PS4Dev::Hat::UP_LEFT);    break;
-            default:                        PS4Dev::setHat(report_in_, PS4Dev::Hat::CENTER);     break;
+            case Gamepad::DPAD_UP:          report_in_.dpad = PS4Dev::HAT_UP;         break;
+            case Gamepad::DPAD_UP_RIGHT:    report_in_.dpad = PS4Dev::HAT_UP_RIGHT;   break;
+            case Gamepad::DPAD_RIGHT:       report_in_.dpad = PS4Dev::HAT_RIGHT;      break;
+            case Gamepad::DPAD_DOWN_RIGHT:  report_in_.dpad = PS4Dev::HAT_DOWN_RIGHT; break;
+            case Gamepad::DPAD_DOWN:        report_in_.dpad = PS4Dev::HAT_DOWN;       break;
+            case Gamepad::DPAD_DOWN_LEFT:   report_in_.dpad = PS4Dev::HAT_DOWN_LEFT;  break;
+            case Gamepad::DPAD_LEFT:        report_in_.dpad = PS4Dev::HAT_LEFT;       break;
+            case Gamepad::DPAD_UP_LEFT:     report_in_.dpad = PS4Dev::HAT_UP_LEFT;    break;
+            default:                        report_in_.dpad = PS4Dev::HAT_CENTER;     break;
         }
 
-        // --------------------------------------------------------------------
-        // BOTONES
-        // --------------------------------------------------------------------
-        uint16_t buttons = 0;
+        const uint16_t btn = gp_in.buttons;
 
-        // Face buttons (B0–B3)
-        if (gp_in.buttons & Gamepad::BUTTON_A)
-            buttons |= PS4Dev::Buttons::CROSS;      // A -> X (Cruz)
-        if (gp_in.buttons & Gamepad::BUTTON_B)
-            buttons |= PS4Dev::Buttons::CIRCLE;     // B -> Círculo
-        if (gp_in.buttons & Gamepad::BUTTON_X)
-            buttons |= PS4Dev::Buttons::SQUARE;     // X -> Cuadrado
-        if (gp_in.buttons & Gamepad::BUTTON_Y)
-            buttons |= PS4Dev::Buttons::TRIANGLE;   // Y -> Triángulo
+        // Face buttons (A/B/X/Y -> CROSS/CIRCLE/SQUARE/TRIANGLE)
+        report_in_.buttonSouth   = (btn & Gamepad::BUTTON_A) ? 1 : 0; // CROSS
+        report_in_.buttonEast    = (btn & Gamepad::BUTTON_B) ? 1 : 0; // CIRCLE
+        report_in_.buttonWest    = (btn & Gamepad::BUTTON_X) ? 1 : 0; // SQUARE
+        report_in_.buttonNorth   = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // TRIANGLE
 
-        // Hombros / sticks
-        if (gp_in.buttons & Gamepad::BUTTON_LB)
-            buttons |= PS4Dev::Buttons::L1;
-        if (gp_in.buttons & Gamepad::BUTTON_RB)
-            buttons |= PS4Dev::Buttons::R1;
-        if (gp_in.buttons & Gamepad::BUTTON_L3)
-            buttons |= PS4Dev::Buttons::L3;
-        if (gp_in.buttons & Gamepad::BUTTON_R3)
-            buttons |= PS4Dev::Buttons::R3;
+        // Hombros
+        report_in_.buttonL1      = (btn & Gamepad::BUTTON_LB) ? 1 : 0;
+        report_in_.buttonR1      = (btn & Gamepad::BUTTON_RB) ? 1 : 0;
+
+        // Sticks pulsados
+        report_in_.buttonL3      = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
+        report_in_.buttonR3      = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
 
         // Centrales
-        if (gp_in.buttons & Gamepad::BUTTON_BACK)
-            buttons |= PS4Dev::Buttons::SHARE;
-        if (gp_in.buttons & Gamepad::BUTTON_START)
-            buttons |= PS4Dev::Buttons::OPTIONS;
-        if (gp_in.buttons & Gamepad::BUTTON_SYS)
-            buttons |= PS4Dev::Buttons::PS;
-        if (gp_in.buttons & Gamepad::BUTTON_MISC)
-            buttons |= PS4Dev::Buttons::TOUCHPAD;   // botón extra -> Touchpad
+        report_in_.buttonSelect  = (btn & Gamepad::BUTTON_BACK)  ? 1 : 0; // SHARE
+        report_in_.buttonStart   = (btn & Gamepad::BUTTON_START) ? 1 : 0; // OPTIONS
+        report_in_.buttonHome    = (btn & Gamepad::BUTTON_SYS)   ? 1 : 0; // PS
+        report_in_.buttonTouchpad= (btn & Gamepad::BUTTON_MISC)  ? 1 : 0; // TOUCHPAD
 
-        // --------------------------------------------------------------------
-        // TRIGGERS: digital + analógico
-        // --------------------------------------------------------------------
+        // Triggers: botón + eje analógico (aquí ON/OFF 0 ó 255)
         if (gp_in.trigger_l)
         {
-            buttons |= PS4Dev::Buttons::L2_DIG;   // botón L2
-            report_in_.trigger_l = 0xFF;          // analógico a tope
+            report_in_.buttonL2   = 1;
+            report_in_.leftTrigger = 0xFF;
         }
         else
         {
-            report_in_.trigger_l = 0x00;
+            report_in_.buttonL2   = 0;
+            report_in_.leftTrigger = 0x00;
         }
 
         if (gp_in.trigger_r)
         {
-            buttons |= PS4Dev::Buttons::R2_DIG;   // botón R2
-            report_in_.trigger_r = 0xFF;
+            report_in_.buttonR2    = 1;
+            report_in_.rightTrigger = 0xFF;
         }
         else
         {
-            report_in_.trigger_r = 0x00;
+            report_in_.buttonR2    = 0;
+            report_in_.rightTrigger = 0x00;
         }
 
-        // Aplica botones al reporte
-        PS4Dev::setButtons(report_in_, buttons);
-
-        // --------------------------------------------------------------------
-        // STICKS (0–255)
-        // --------------------------------------------------------------------
-        report_in_.joystick_lx = Scale::int16_to_uint8(gp_in.joystick_lx);
-        report_in_.joystick_ly = Scale::int16_to_uint8(gp_in.joystick_ly);
-        report_in_.joystick_rx = Scale::int16_to_uint8(gp_in.joystick_rx);
-        report_in_.joystick_ry = Scale::int16_to_uint8(gp_in.joystick_ry);
+        // El resto (sensores, touchpad detallado, etc.) se queda a 0 como en GP2040 si no se usa.
     }
 
-    // ------------------------------------------------------------------------
-    // Enviar el reporte HID
-    // ------------------------------------------------------------------------
     if (tud_suspended())
     {
         tud_remote_wakeup();
@@ -125,9 +107,10 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 
     if (tud_hid_ready())
     {
-        // Nuestro InReport ya incluye report_id = 0x01 como primer byte
+        // report_id = 0 → TinyUSB NO añade ID delante.
+        // Nuestro buffer YA empieza con 0x01 (reportID).
         tud_hid_report(
-            0, // 0 => TinyUSB NO añade otro ID delante
+            0,
             reinterpret_cast<uint8_t*>(&report_in_),
             sizeof(PS4Dev::InReport)
         );
@@ -148,6 +131,7 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
         return len;
     }
 
+    // No manejamos de momento feature / output reports aquí
     return 0;
 }
 
