@@ -68,8 +68,8 @@ namespace PS4Dev {
         uint8_t  joystick_ly;  // 0–255
         uint8_t  joystick_rx;  // 0–255
         uint8_t  joystick_ry;  // 0–255
-        uint8_t  trigger_l;    // L2 analógico 0–255
-        uint8_t  trigger_r;    // R2 analógico 0–255
+        uint8_t  trigger_r;    // L2 analógico 0–255
+        uint8_t  trigger_l;    // R2 analógico 0–255
 
         InReport() {
             std::memset(this, 0, sizeof(InReport));
