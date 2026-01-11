@@ -5,7 +5,7 @@
 
 void PS4Device::initialize()
 {
-    class_driver_ =
+    class_driver__ =
     {
         .name             = TUD_DRV_NAME("PS4"),
         .init             = hidd_init,
@@ -22,103 +22,109 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 {
     (void)idx;
 
-    if (gamepad.new_pad_in())
+    // ---- Estado de la macro MUTE (cuadrado + círculo 3.5 s) ----
+    static bool     mutePrev          = false;
+    static uint32_t muteMacroTicks    = 0;
+    // Suponiendo que process() se llama aprox. cada 1 ms.
+    static constexpr uint32_t MUTE_MACRO_DURATION_TICKS = 3500;
+
+    Gamepad::PadIn gp_in = gamepad.get_pad_in();
+    const uint16_t btn   = gp_in.buttons;
+
+    const bool sharePressed = (btn & Gamepad::BUTTON_BACK)  != 0;  // SHARE
+    const bool mutePressed  = (btn & Gamepad::BUTTON_MISC)  != 0;  // usamos MISC como MUTE
+
+    // Flanco de subida de MUTE → arranca macro 3.5 s
+    if (mutePressed && !mutePrev)
     {
-        Gamepad::PadIn gp_in = gamepad.get_pad_in();
+        muteMacroTicks = MUTE_MACRO_DURATION_TICKS;
+    }
+    mutePrev = mutePressed;
 
-        // Limpia y deja todo en neutro
-        std::memset(&report_in_, 0, sizeof(report_in_));
+    const bool macroActive = (muteMacroTicks > 0);
+    if (muteMacroTicks > 0)
+        --muteMacroTicks;
 
-        // Report ID 1 (coincide con 0x85,0x01 del descriptor HID)
-        report_in_.reportID = 0x01;
+    // ----------------------------------------------------------------
+    // Construimos SIEMPRE el reporte desde cero
+    // ----------------------------------------------------------------
+    std::memset(&report_in_, 0, sizeof(report_in_));
 
-        // Sticks analógicos (0-255)
-        report_in_.leftStickX  = Scale::int16_to_uint8(gp_in.joystick_lx);
-        report_in_.leftStickY  = Scale::int16_to_uint8(gp_in.joystick_ly);
-        report_in_.rightStickX = Scale::int16_to_uint8(gp_in.joystick_rx);
-        report_in_.rightStickY = Scale::int16_to_uint8(gp_in.joystick_ry);
+    // Report ID 1 (coincide con 0x85,0x01 del descriptor HID)
+    report_in_.reportID = 0x01;
 
-        // D-Pad → HAT en 4 bits
-        switch (gp_in.dpad)
-        {
-            case Gamepad::DPAD_UP:          report_in_.dpad = PS4Dev::HAT_UP;         break;
-            case Gamepad::DPAD_UP_RIGHT:    report_in_.dpad = PS4Dev::HAT_UP_RIGHT;   break;
-            case Gamepad::DPAD_RIGHT:       report_in_.dpad = PS4Dev::HAT_RIGHT;      break;
-            case Gamepad::DPAD_DOWN_RIGHT:  report_in_.dpad = PS4Dev::HAT_DOWN_RIGHT; break;
-            case Gamepad::DPAD_DOWN:        report_in_.dpad = PS4Dev::HAT_DOWN;       break;
-            case Gamepad::DPAD_DOWN_LEFT:   report_in_.dpad = PS4Dev::HAT_DOWN_LEFT;  break;
-            case Gamepad::DPAD_LEFT:        report_in_.dpad = PS4Dev::HAT_LEFT;       break;
-            case Gamepad::DPAD_UP_LEFT:     report_in_.dpad = PS4Dev::HAT_UP_LEFT;    break;
-            default:                        report_in_.dpad = PS4Dev::HAT_CENTER;     break;
-        }
+    // Touchpad: dejarlo sin dedos para que no salga el punto azul fijo
+    report_in_.gamepad.touchpadActive = 0;
+    report_in_.gamepad.touchpadData.p1.unpressed = 1;
+    report_in_.gamepad.touchpadData.p2.unpressed = 1;
 
-        const uint16_t btn = gp_in.buttons;
+    // Sticks analógicos (0-255)
+    report_in_.leftStickX  = Scale::int16_to_uint8(gp_in.joystick_lx);
+    report_in_.leftStickY  = Scale::int16_to_uint8(gp_in.joystick_ly);
+    report_in_.rightStickX = Scale::int16_to_uint8(gp_in.joystick_rx);
+    report_in_.rightStickY = Scale::int16_to_uint8(gp_in.joystick_ry);
 
-        // --- FLAGS AUXILIARES ---
-        const bool sharePressed = (btn & Gamepad::BUTTON_BACK)  != 0;  // SHARE
-        const bool mutePressed  = (btn & Gamepad::BUTTON_MISC)  != 0;  // usamos MISC como MUTE
-
-        // Face buttons (A/B/X/Y -> CROSS/CIRCLE/SQUARE/TRIANGLE)
-        // QUAD / SQUARE: normal + MUTE también lo aprieta
-        const bool baseSquare = (btn & Gamepad::BUTTON_X) != 0;  // lo que ya hacía antes
-        report_in_.buttonWest  = (baseSquare || mutePressed) ? 1 : 0; // ☐ + MUTE
-
-        report_in_.buttonSouth = (btn & Gamepad::BUTTON_A) ? 1 : 0; // CROSS
-        report_in_.buttonEast  = (btn & Gamepad::BUTTON_B) ? 1 : 0; // CIRCLE
-        report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // TRIANGLE
-
-        // Hombros
-        report_in_.buttonL1    = (btn & Gamepad::BUTTON_LB) ? 1 : 0;
-        report_in_.buttonR1    = (btn & Gamepad::BUTTON_RB) ? 1 : 0;
-
-        // Sticks pulsados
-        report_in_.buttonL3    = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
-        report_in_.buttonR3    = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
-
-        // Centrales:
-        //  - SHARE aprieta su botón normal
-        //  - y además también aprieta el TOUCHPAD
-        report_in_.buttonSelect   = sharePressed ? 1 : 0;  // SHARE normal
-
-        // PS
-        report_in_.buttonHome     = (btn & Gamepad::BUTTON_SYS)   ? 1 : 0;
-
-        // OPTIONS
-        report_in_.buttonStart    = (btn & Gamepad::BUTTON_START) ? 1 : 0;
-
-        // TOUCHPAD: se pulsa si:
-        //   - el botón MISC (MUTE) está pulsado, o
-        //   - SHARE está pulsado (lo que tú querías)
-        const bool touchpadByMisc = mutePressed;
-        const bool touchpadByShare = sharePressed;
-        report_in_.buttonTouchpad = (touchpadByMisc || touchpadByShare) ? 1 : 0;
-
-        // Triggers: botón + eje analógico (ON/OFF 0 ó 255)
-        if (gp_in.trigger_l)
-        {
-            report_in_.buttonL2    = 1;
-            report_in_.leftTrigger = 0xFF;
-        }
-        else
-        {
-            report_in_.buttonL2    = 0;
-            report_in_.leftTrigger = 0x00;
-        }
-
-        if (gp_in.trigger_r)
-        {
-            report_in_.buttonR2     = 1;
-            report_in_.rightTrigger = 0xFF;
-        }
-        else
-        {
-            report_in_.buttonR2     = 0;
-            report_in_.rightTrigger = 0x00;
-        }
-
-        // El resto (sensores, touchpad detallado, etc.) se queda a 0 como en GP2040-CE si no se usa.
+    // ------------------ D-Pad → HAT ------------------
+    switch (gp_in.dpad)
+    {
+        case Gamepad::DPAD_UP:          report_in_.dpad = PS4Dev::HAT_UP;         break;
+        case Gamepad::DPAD_UP_RIGHT:    report_in_.dpad = PS4Dev::HAT_UP_RIGHT;   break;
+        case Gamepad::DPAD_RIGHT:       report_in_.dpad = PS4Dev::HAT_RIGHT;      break;
+        case Gamepad::DPAD_DOWN_RIGHT:  report_in_.dpad = PS4Dev::HAT_DOWN_RIGHT; break;
+        case Gamepad::DPAD_DOWN:        report_in_.dpad = PS4Dev::HAT_DOWN;       break;
+        case Gamepad::DPAD_DOWN_LEFT:   report_in_.dpad = PS4Dev::HAT_DOWN_LEFT;  break;
+        case Gamepad::DPAD_LEFT:        report_in_.dpad = PS4Dev::HAT_LEFT;       break;
+        case Gamepad::DPAD_UP_LEFT:     report_in_.dpad = PS4Dev::HAT_UP_LEFT;    break;
+        default:                        report_in_.dpad = PS4Dev::HAT_CENTER;     break;
     }
 
+    // ------------------ Face buttons + MACRO ------------------
+    // Base (sin macro)
+    const bool baseSquare = (btn & Gamepad::BUTTON_X) != 0;  // Square
+    const bool baseCircle = (btn & Gamepad::BUTTON_B) != 0;  // Circle
+
+    // Macro: MUTE mantiene Square + Circle durante ~3.5 s
+    const bool squareFinal = baseSquare || macroActive;
+    const bool circleFinal = baseCircle || macroActive;
+
+    report_in_.buttonWest  = squareFinal ? 1 : 0;             // Square
+    report_in_.buttonEast  = circleFinal ? 1 : 0;             // Circle
+    report_in_.buttonSouth = (btn & Gamepad::BUTTON_A) ? 1 : 0; // Cross
+    report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // Triangle
+
+    // ------------------ Hombros / Triggers (rotación) ------------------
+    const bool physL1 = (btn & Gamepad::BUTTON_LB) != 0;
+    const bool physR1 = (btn & Gamepad::BUTTON_RB) != 0;
+    const bool physL2 = gp_in.trigger_l;
+    const bool physR2 = gp_in.trigger_r;
+
+    // R1 → R2, R2 → L2, L2 → R1 (L1 se queda igual)
+    report_in_.buttonL1 = physL1 ? 1 : 0;
+    report_in_.buttonR1 = physL2 ? 1 : 0;   // L2 se ve como R1
+    report_in_.buttonL2 = physR2 ? 1 : 0;   // R2 se ve como L2
+    report_in_.buttonR2 = physR1 ? 1 : 0;   // R1 se ve como R2
+
+    // Ejes analógicos de L2 / R2 según el nuevo mapa
+    report_in_.leftTrigger  = physR2 ? 0xFF : 0x00;  // ahora L2 = trigger derecho físico
+    report_in_.rightTrigger = physL2 ? 0xFF : 0x00;  // R2 = trigger izquierdo físico
+
+    // ------------------ Sticks pulsados ------------------
+    report_in_.buttonL3 = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
+    report_in_.buttonR3 = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
+
+    // ------------------ Centrales ------------------
+    // SHARE normal
+    report_in_.buttonSelect = sharePressed ? 1 : 0;
+    // OPTIONS
+    report_in_.buttonStart  = (btn & Gamepad::BUTTON_START) ? 1 : 0;
+    // PS
+    report_in_.buttonHome   = (btn & Gamepad::BUTTON_SYS) ? 1 : 0;
+    // TOUCHPAD click: lo hace SHARE (y solo SHARE)
+    report_in_.buttonTouchpad = sharePressed ? 1 : 0;
+
+    // ----------------------------------------------------------------
+    // Enviar el reporte HID
+    // ----------------------------------------------------------------
     if (tud_suspended())
     {
         tud_remote_wakeup();
@@ -127,7 +133,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     if (tud_hid_ready())
     {
         tud_hid_report(
-            0,
+            0, // TinyUSB no añade ID; el buffer ya empieza en reportID = 1
             reinterpret_cast<uint8_t*>(&report_in_),
             sizeof(PS4Dev::InReport)
         );
