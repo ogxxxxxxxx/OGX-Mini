@@ -54,50 +54,69 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 
         const uint16_t btn = gp_in.buttons;
 
+        // --- FLAGS AUXILIARES ---
+        const bool sharePressed = (btn & Gamepad::BUTTON_BACK)  != 0;  // SHARE
+        const bool mutePressed  = (btn & Gamepad::BUTTON_MISC)  != 0;  // usamos MISC como MUTE
+
         // Face buttons (A/B/X/Y -> CROSS/CIRCLE/SQUARE/TRIANGLE)
-        report_in_.buttonSouth   = (btn & Gamepad::BUTTON_A) ? 1 : 0; // CROSS
-        report_in_.buttonEast    = (btn & Gamepad::BUTTON_B) ? 1 : 0; // CIRCLE
-        report_in_.buttonWest    = (btn & Gamepad::BUTTON_X) ? 1 : 0; // SQUARE
-        report_in_.buttonNorth   = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // TRIANGLE
+        // QUAD / SQUARE: normal + MUTE también lo aprieta
+        const bool baseSquare = (btn & Gamepad::BUTTON_X) != 0;  // lo que ya hacía antes
+        report_in_.buttonWest  = (baseSquare || mutePressed) ? 1 : 0; // ☐ + MUTE
+
+        report_in_.buttonSouth = (btn & Gamepad::BUTTON_A) ? 1 : 0; // CROSS
+        report_in_.buttonEast  = (btn & Gamepad::BUTTON_B) ? 1 : 0; // CIRCLE
+        report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // TRIANGLE
 
         // Hombros
-        report_in_.buttonL1      = (btn & Gamepad::BUTTON_LB) ? 1 : 0;
-        report_in_.buttonR1      = (btn & Gamepad::BUTTON_RB) ? 1 : 0;
+        report_in_.buttonL1    = (btn & Gamepad::BUTTON_LB) ? 1 : 0;
+        report_in_.buttonR1    = (btn & Gamepad::BUTTON_RB) ? 1 : 0;
 
         // Sticks pulsados
-        report_in_.buttonL3      = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
-        report_in_.buttonR3      = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
+        report_in_.buttonL3    = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
+        report_in_.buttonR3    = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
 
-        // Centrales
-        report_in_.buttonSelect  = (btn & Gamepad::BUTTON_BACK)  ? 1 : 0; // SHARE
-        report_in_.buttonStart   = (btn & Gamepad::BUTTON_START) ? 1 : 0; // OPTIONS
-        report_in_.buttonHome    = (btn & Gamepad::BUTTON_SYS)   ? 1 : 0; // PS
-        report_in_.buttonTouchpad= (btn & Gamepad::BUTTON_MISC)  ? 1 : 0; // TOUCHPAD
+        // Centrales:
+        //  - SHARE aprieta su botón normal
+        //  - y además también aprieta el TOUCHPAD
+        report_in_.buttonSelect   = sharePressed ? 1 : 0;  // SHARE normal
 
-        // Triggers: botón + eje analógico (aquí ON/OFF 0 ó 255)
+        // PS
+        report_in_.buttonHome     = (btn & Gamepad::BUTTON_SYS)   ? 1 : 0;
+
+        // OPTIONS
+        report_in_.buttonStart    = (btn & Gamepad::BUTTON_START) ? 1 : 0;
+
+        // TOUCHPAD: se pulsa si:
+        //   - el botón MISC (MUTE) está pulsado, o
+        //   - SHARE está pulsado (lo que tú querías)
+        const bool touchpadByMisc = mutePressed;
+        const bool touchpadByShare = sharePressed;
+        report_in_.buttonTouchpad = (touchpadByMisc || touchpadByShare) ? 1 : 0;
+
+        // Triggers: botón + eje analógico (ON/OFF 0 ó 255)
         if (gp_in.trigger_l)
         {
-            report_in_.buttonL2   = 1;
+            report_in_.buttonL2    = 1;
             report_in_.leftTrigger = 0xFF;
         }
         else
         {
-            report_in_.buttonL2   = 0;
+            report_in_.buttonL2    = 0;
             report_in_.leftTrigger = 0x00;
         }
 
         if (gp_in.trigger_r)
         {
-            report_in_.buttonR2    = 1;
+            report_in_.buttonR2     = 1;
             report_in_.rightTrigger = 0xFF;
         }
         else
         {
-            report_in_.buttonR2    = 0;
+            report_in_.buttonR2     = 0;
             report_in_.rightTrigger = 0x00;
         }
 
-        // El resto (sensores, touchpad detallado, etc.) se queda a 0 como en GP2040 si no se usa.
+        // El resto (sensores, touchpad detallado, etc.) se queda a 0 como en GP2040-CE si no se usa.
     }
 
     if (tud_suspended())
@@ -107,8 +126,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 
     if (tud_hid_ready())
     {
-        // report_id = 0 → TinyUSB NO añade ID delante.
-        // Nuestro buffer YA empieza con 0x01 (reportID).
         tud_hid_report(
             0,
             reinterpret_cast<uint8_t*>(&report_in_),
@@ -131,7 +148,6 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
         return len;
     }
 
-    // No manejamos de momento feature / output reports aquí
     return 0;
 }
 
