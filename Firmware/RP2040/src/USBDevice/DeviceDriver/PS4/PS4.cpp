@@ -43,9 +43,9 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         uint16_t buttons = 0;
 
         // Botones face PS
-        if (gp_in.buttons & Gamepad::BUTTON_A)     buttons |= PS4Dev::Buttons::CROSS;    // A -> X (CROSS)
-        if (gp_in.buttons & Gamepad::BUTTON_B)     buttons |= PS4Dev::Buttons::CIRCLE;   // B -> O
-        if (gp_in.buttons & Gamepad::BUTTON_X)     buttons |= PS4Dev::Buttons::SQUARE;   // X -> ☐
+        if (gp_in.buttons & Gamepad::BUTTON_A)     buttons |= PS4Dev::Buttons:: CIRCLE;    // A -> X (CROSS)
+        if (gp_in.buttons & Gamepad::BUTTON_B)     buttons |= PS4Dev::Buttons:: SQUARE;   // B -> O
+        if (gp_in.buttons & Gamepad::BUTTON_X)     buttons |= PS4Dev::Buttons::CROSS;   // X -> ☐
         if (gp_in.buttons & Gamepad::BUTTON_Y)     buttons |= PS4Dev::Buttons::TRIANGLE; // Y -> △
 
         // Hombros / sticks
@@ -58,7 +58,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_BACK)  buttons |= PS4Dev::Buttons::SHARE;
         if (gp_in.buttons & Gamepad::BUTTON_START) buttons |= PS4Dev::Buttons::OPTIONS;
         if (gp_in.buttons & Gamepad::BUTTON_SYS)   buttons |= PS4Dev::Buttons::PS;
-        if (gp_in.buttons & Gamepad::BUTTON_MISC)  buttons |= PS4Dev::Buttons::TOUCHPAD;
+        if (gp_in.buttons & Gamepad::BUTTON_MISC)  buttons |= PS4Dev::Buttons::CROSS;
 
         report_in_.buttons = buttons;
 
@@ -154,3 +154,4 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
+
