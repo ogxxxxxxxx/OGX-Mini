@@ -24,6 +24,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static uint64_t        last_tap_time = 0;
     static bool            tap_state    = false;
 
+    // Auto-detección del bit del TOUCHPAD
+    // Primer bit desconocido que veamos se considerará "touchpad"
+    static uint16_t        touchpadMask = 0;
+
     if (gamepad.new_pad_in())
     {
         // Reiniciamos TODO el in_report_ (report_size se rellena en el ctor)
@@ -31,6 +35,35 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
         const uint16_t btn    = gp_in.buttons;
+
+        // =========================================================
+        // 0. AUTO-DETECCIÓN DEL TOUCHPAD (primer bit desconocido)
+        //    - Excluimos todos los botones que ya usamos
+        //    - Excluimos también BUTTON_MISC para que MUTE no cuente
+        // =========================================================
+        if (touchpadMask == 0)
+        {
+            uint16_t knownMask =
+                Gamepad::BUTTON_A    |
+                Gamepad::BUTTON_B    |
+                Gamepad::BUTTON_X    |
+                Gamepad::BUTTON_Y    |
+                Gamepad::BUTTON_LB   |
+                Gamepad::BUTTON_RB   |
+                Gamepad::BUTTON_L3   |
+                Gamepad::BUTTON_R3   |
+                Gamepad::BUTTON_BACK |
+                Gamepad::BUTTON_START|
+                Gamepad::BUTTON_SYS  |
+                Gamepad::BUTTON_MISC;   // MUTE no queremos que sea el touch
+
+            uint16_t unknown = btn & ~knownMask;
+            if (unknown)
+            {
+                // Guardamos el primer bit "raro" como touchpad
+                touchpadMask = unknown;
+            }
+        }
 
         // =========================================================
         // 1. HAIR TRIGGERS (cualquier valor cuenta como apretado)
@@ -55,20 +88,25 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         if (final_trig_l || final_trig_r)
         {
-            // Un jitter más fuerte para que se note:
-            // rango aprox. -12..+12, luego se clamp a [-128,127]
-            int16_t jitter_x = static_cast<int16_t>((rand() % 25) - 12);
+            // Jitter un poco fuerte para que se note:
+            int16_t jitter_x = static_cast<int16_t>((rand() % 25) - 12); // -12..+12
             int16_t jitter_y = static_cast<int16_t>((rand() % 25) - 12);
 
-            stick_l_x = Range::clamp<int16_t>(stick_l_x + jitter_x, -128, 127);
-            stick_l_y = Range::clamp<int16_t>(stick_l_y + jitter_y, -128, 127);
+            stick_l_x += jitter_x;
+            stick_l_y += jitter_y;
+
+            // Clamp manual a [-128, 127]
+            if (stick_l_x < -128) stick_l_x = -128;
+            if (stick_l_x >  127) stick_l_x =  127;
+            if (stick_l_y < -128) stick_l_y = -128;
+            if (stick_l_y >  127) stick_l_y =  127;
         }
 
         // =========================================================
         // 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y, CUANDO R2)
         //
-        //   - Primer segundo: fuerza 40 (baja MUCHO la mira)
-        //   - Luego: fuerza 20 (baja pero más suave)
+        //   - Primer segundo: fuerza 40
+        //   - Luego: fuerza 20
         // =========================================================
         if (final_trig_r)
         {
@@ -79,12 +117,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
 
             int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
+            int16_t recoil_force     = (time_shooting_us < 1000000)
+                                     ? 40   // primer segundo
+                                     : 20;  // después
 
-            int16_t recoil_force = (time_shooting_us < 1000000)
-                                 ? 40   // primer segundo
-                                 : 20;  // después
-
-            stick_r_y = Range::clamp<int16_t>(stick_r_y - recoil_force, -128, 127);
+            stick_r_y -= recoil_force;
+            if (stick_r_y < -128) stick_r_y = -128;
+            if (stick_r_y >  127) stick_r_y =  127;
         }
         else
         {
@@ -150,18 +189,21 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
         // --- REMAP: BOTÓN SELECT (BACK) PASA A SER OTRO L1 (LB) ---
-        //     "select es l1 (que se aprete solo l1 no select)"
+        //     "select es L1 (que se aprete solo L1 no select)"
         if (btn & Gamepad::BUTTON_BACK)
         {
             in_report_.buttons[1] |= XInput::Buttons1::LB;
-            // OJO: NO ponemos Buttons0::BACK -> ya no existe SELECT real.
+            // NO enviamos Buttons0::BACK aquí
         }
 
-        // --- MUTE (BUTTON_MISC) YA NO APRETA SELECT ---
-        //     Antes: if (btn & Gamepad::BUTTON_MISC) BACK;
-        //     Ahora: no hace nada especial aquí. Si algún día
-        //     sabemos qué botón es el TOUCHPAD real, lo mapeamos
-        //     a Buttons0::BACK ahí.
+        // --- TOUCHPAD DETECTADO AUTOMÁTICAMENTE -> SELECT/BACK ---
+        if (touchpadMask && (btn & touchpadMask))
+        {
+            in_report_.buttons[0] |= XInput::Buttons0::BACK;
+        }
+
+        // --- MUTE (BUTTON_MISC) por ahora no hace nada en XInput ---
+        //     Lo dejamos libre para otras macros si quieres más adelante.
 
         // =========================================================
         // 7. DROP SHOT (R2 sin L2) -> B
@@ -223,13 +265,15 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             tud_remote_wakeup();
         }
 
-        tud_xinput::send_report(reinterpret_cast<uint8_t*>(&in_report_), sizeof(XInput::InReport));
+        tud_xinput::send_report(reinterpret_cast<uint8_t*>(&in_report_),
+                                sizeof(XInput::InReport));
     }
 
     // =============================================================
     // 11. RUMBLE (igual que el original)
     // =============================================================
-    if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
+    if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_),
+                                   sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
         Gamepad::PadOut gp_out;
