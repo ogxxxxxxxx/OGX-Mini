@@ -145,8 +145,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                     );
 
                     static const int64_t STRONG_DURATION_US = 1500000; // 1.5 s
-                    static const int16_t RECOIL_STRONG      = 12000;
-                    static const int16_t RECOIL_WEAK        = 10000;
+                    static const int16_t RECOIL_STRONG      = 12500;
+                    static const int16_t RECOIL_WEAK        = 11200;
 
                     int16_t recoil_force =
                         (time_shooting_us < STRONG_DURATION_US)
