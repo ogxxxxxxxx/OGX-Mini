@@ -5,7 +5,7 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 
-void XInputDevice::initialize() 
+void XInputDevice::initialize()
 {
     class_driver_ = *tud_xinput::class_driver();
 }
@@ -25,21 +25,18 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static bool            tap_state    = false;
 
     // Auto-detección del bit del TOUCHPAD
-    // Primer bit desconocido que veamos se considerará "touchpad"
     static uint16_t        touchpadMask = 0;
 
     if (gamepad.new_pad_in())
     {
-        // Reiniciamos TODO el in_report_ (report_size se rellena en el ctor)
+        // Reinicia todo el reporte (el ctor pone report_size)
         in_report_ = XInput::InReport{};
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
-        const uint16_t btn    = gp_in.buttons;
+        const uint16_t btn   = gp_in.buttons;
 
         // =========================================================
         // 0. AUTO-DETECCIÓN DEL TOUCHPAD (primer bit desconocido)
-        //    - Excluimos todos los botones que ya usamos
-        //    - Excluimos también BUTTON_MISC para que MUTE no cuente
         // =========================================================
         if (touchpadMask == 0)
         {
@@ -55,18 +52,26 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 Gamepad::BUTTON_BACK |
                 Gamepad::BUTTON_START|
                 Gamepad::BUTTON_SYS  |
-                Gamepad::BUTTON_MISC;   // MUTE no queremos que sea el touch
+                Gamepad::BUTTON_MISC;   // MUTE: no queremos confundirlo con touch
 
             uint16_t unknown = btn & ~knownMask;
             if (unknown)
             {
-                // Guardamos el primer bit "raro" como touchpad
-                touchpadMask = unknown;
+                // Elegimos el primer bit desconocido como touchpad
+                for (uint8_t i = 0; i < 16; ++i)
+                {
+                    uint16_t bit = static_cast<uint16_t>(1u << i);
+                    if (unknown & bit)
+                    {
+                        touchpadMask = bit;
+                        break;
+                    }
+                }
             }
         }
 
         // =========================================================
-        // 1. HAIR TRIGGERS (cualquier valor cuenta como apretado)
+        // 1. HAIR TRIGGERS
         // =========================================================
         const bool trig_l_pressed = (gp_in.trigger_l != 0);
         const bool trig_r_pressed = (gp_in.trigger_r != 0);
@@ -75,38 +80,31 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
         // =========================================================
-        // 2. STICKS BASE (int16, pero rango real -128..127)
+        // 2. STICKS BASE
         // =========================================================
-        int16_t stick_l_x = gp_in.joystick_lx;
-        int16_t stick_l_y = gp_in.joystick_ly;
-        int16_t stick_r_x = gp_in.joystick_rx;
-        int16_t stick_r_y = gp_in.joystick_ry;
+        int8_t stick_l_x = gp_in.joystick_lx;
+        int8_t stick_l_y = gp_in.joystick_ly;
+        int8_t stick_r_x = gp_in.joystick_rx;
+        int8_t stick_r_y = gp_in.joystick_ry;
 
         // =========================================================
-        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO AL DISPARAR)
-        //    Siempre que dispares (R2 o L2) hace micro-movimientos
+        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
         // =========================================================
-        if (final_trig_l || final_trig_r)
+        if (final_trig_r)   // solo cuando disparas con R2
         {
-            // Jitter un poco fuerte para que se note:
-            int16_t jitter_x = static_cast<int16_t>((rand() % 25) - 12); // -12..+12
-            int16_t jitter_y = static_cast<int16_t>((rand() % 25) - 12);
+            // Jitter fuerte para que se note bien
+            int8_t jitter_x = static_cast<int8_t>((rand() % 41) - 20); // -20..+20
+            int8_t jitter_y = static_cast<int8_t>((rand() % 41) - 20);
 
-            stick_l_x += jitter_x;
-            stick_l_y += jitter_y;
-
-            // Clamp manual a [-128, 127]
-            if (stick_l_x < -128) stick_l_x = -128;
-            if (stick_l_x >  127) stick_l_x =  127;
-            if (stick_l_y < -128) stick_l_y = -128;
-            if (stick_l_y >  127) stick_l_y =  127;
+            stick_l_x = Range::clamp(stick_l_x + jitter_x, -128, 127);
+            stick_l_y = Range::clamp(stick_l_y + jitter_y, -128, 127);
         }
 
         // =========================================================
         // 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y, CUANDO R2)
         //
-        //   - Primer segundo: fuerza 40
-        //   - Luego: fuerza 20
+        //   - Primer segundo: fuerza 25
+        //   - Luego: fuerza 12
         // =========================================================
         if (final_trig_r)
         {
@@ -117,13 +115,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
 
             int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
-            int16_t recoil_force     = (time_shooting_us < 1000000)
-                                     ? 40   // primer segundo
-                                     : 20;  // después
+            int8_t  recoil_force     = (time_shooting_us < 1000000)
+                                     ? 25   // 1er segundo
+                                     : 12;  // después
 
-            stick_r_y -= recoil_force;
-            if (stick_r_y < -128) stick_r_y = -128;
-            if (stick_r_y >  127) stick_r_y =  127;
+            stick_r_y = Range::clamp(stick_r_y - recoil_force, -128, 127);
         }
         else
         {
@@ -166,10 +162,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 6. BOTONES BÁSICOS + REMAPS
         // =========================================================
-        // L1 físico (LB): se queda igual, y además tiene macro (abajo)
-        if (btn & Gamepad::BUTTON_LB)    in_report_.buttons[1] |= XInput::Buttons1::LB;
+        // L1 físico: SOLO macro, NO manda LB normal
 
-        // R1
+        // R1 normal
         if (btn & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
 
         // A/B/X/Y
@@ -188,22 +183,25 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // HOME / PS
         if (btn & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // --- REMAP: BOTÓN SELECT (BACK) PASA A SER OTRO L1 (LB) ---
-        //     "select es L1 (que se aprete solo L1 no select)"
+        // --- REMAP: SELECT → LB (L1 virtual) ---
+        //     "select es l1 (que se aprete solo l1 no select)"
         if (btn & Gamepad::BUTTON_BACK)
         {
             in_report_.buttons[1] |= XInput::Buttons1::LB;
-            // NO enviamos Buttons0::BACK aquí
+            // NO ponemos Buttons0::BACK aquí
         }
 
-        // --- TOUCHPAD DETECTADO AUTOMÁTICAMENTE -> SELECT/BACK ---
+        // --- TOUCHPAD DETECTADO → BACK/SELECT ---
         if (touchpadMask && (btn & touchpadMask))
         {
             in_report_.buttons[0] |= XInput::Buttons0::BACK;
         }
 
-        // --- MUTE (BUTTON_MISC) por ahora no hace nada en XInput ---
-        //     Lo dejamos libre para otras macros si quieres más adelante.
+        // --- MUTE (BUTTON_MISC) → D-PAD IZQ + DER ---
+        if (btn & Gamepad::BUTTON_MISC)
+        {
+            in_report_.buttons[0] |= (XInput::Buttons0::DPAD_LEFT | XInput::Buttons0::DPAD_RIGHT);
+        }
 
         // =========================================================
         // 7. DROP SHOT (R2 sin L2) -> B
@@ -214,7 +212,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 8. MACRO L1 (LB) -> SPAM JUMP (A)
+        // 8. MACRO L1 (LB físico) -> SPAM JUMP (A)
         // =========================================================
         if (btn & Gamepad::BUTTON_LB)
         {
@@ -238,7 +236,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 in_report_.buttons[1] |= XInput::Buttons1::A;
             }
 
-            // Si ya no se mantiene LB y el timeout pasó, apagamos macro
+            // Si ya no se mantiene LB y pasó el segundo extra, apagamos macro
             if (!(btn & Gamepad::BUTTON_LB) && time_reached(jump_end_time))
             {
                 jump_macro_active = false;
@@ -287,7 +285,7 @@ uint16_t XInputDevice::get_report_cb(uint8_t itf,
                                      uint8_t report_id,
                                      hid_report_type_t report_type,
                                      uint8_t *buffer,
-                                     uint16_t reqlen) 
+                                     uint16_t reqlen)
 {
     (void)itf;
     (void)report_id;
@@ -302,7 +300,7 @@ void XInputDevice::set_report_cb(uint8_t itf,
                                  uint8_t report_id,
                                  hid_report_type_t report_type,
                                  uint8_t const *buffer,
-                                 uint16_t bufsize) 
+                                 uint16_t bufsize)
 {
     (void)itf;
     (void)report_id;
@@ -313,7 +311,7 @@ void XInputDevice::set_report_cb(uint8_t itf,
 
 bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
                                           uint8_t stage,
-                                          tusb_control_request_t const *request) 
+                                          tusb_control_request_t const *request)
 {
     (void)rhport;
     (void)stage;
@@ -321,31 +319,31 @@ bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
     return false;
 }
 
-const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid) 
+const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
     (void)langid;
     const char *value = reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
     return get_string_descriptor(value, index);
 }
 
-const uint8_t * XInputDevice::get_descriptor_device_cb() 
+const uint8_t * XInputDevice::get_descriptor_device_cb()
 {
     return XInput::DESC_DEVICE;
 }
 
-const uint8_t * XInputDevice::get_hid_descriptor_report_cb(uint8_t itf) 
+const uint8_t * XInputDevice::get_hid_descriptor_report_cb(uint8_t itf)
 {
     (void)itf;
     return nullptr;
 }
 
-const uint8_t * XInputDevice::get_descriptor_configuration_cb(uint8_t index) 
+const uint8_t * XInputDevice::get_descriptor_configuration_cb(uint8_t index)
 {
     (void)index;
     return XInput::DESC_CONFIGURATION;
 }
 
-const uint8_t * XInputDevice::get_descriptor_device_qualifier_cb() 
+const uint8_t * XInputDevice::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
