@@ -52,18 +52,17 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 Gamepad::BUTTON_BACK |
                 Gamepad::BUTTON_START|
                 Gamepad::BUTTON_SYS  |
-                Gamepad::BUTTON_MISC;   // MUTE: no queremos confundirlo con touch
+                Gamepad::BUTTON_MISC;   // MUTE fuera del auto-detector
 
             uint16_t unknown = btn & ~knownMask;
             if (unknown)
             {
-                // Elegimos el primer bit desconocido como touchpad
                 for (uint8_t i = 0; i < 16; ++i)
                 {
                     uint16_t bit = static_cast<uint16_t>(1u << i);
                     if (unknown & bit)
                     {
-                        touchpadMask = bit;
+                        touchpadMask = bit; // este será nuestro TOUCHPAD
                         break;
                     }
                 }
@@ -80,24 +79,30 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
         // =========================================================
-        // 2. STICKS BASE
+        // 2. STICKS BASE (int16 como el original)
         // =========================================================
-        int8_t stick_l_x = gp_in.joystick_lx;
-        int8_t stick_l_y = gp_in.joystick_ly;
-        int8_t stick_r_x = gp_in.joystick_rx;
-        int8_t stick_r_y = gp_in.joystick_ry;
+        int16_t stick_l_x = gp_in.joystick_lx;
+        int16_t stick_l_y = gp_in.joystick_ly;
+        int16_t stick_r_x = gp_in.joystick_rx;
+        int16_t stick_r_y = gp_in.joystick_ry;
 
         // =========================================================
         // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
         // =========================================================
         if (final_trig_r)   // solo cuando disparas con R2
         {
-            // Jitter fuerte para que se note bien
-            int8_t jitter_x = static_cast<int8_t>((rand() % 41) - 20); // -20..+20
-            int8_t jitter_y = static_cast<int8_t>((rand() % 41) - 20);
+            // Jitter fuerte en escala int16
+            const int16_t JITTER = 6000; // ~20% del rango
+            int16_t jitter_x = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
+            int16_t jitter_y = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
 
-            stick_l_x = Range::clamp(stick_l_x + jitter_x, -128, 127);
-            stick_l_y = Range::clamp(stick_l_y + jitter_y, -128, 127);
+            stick_l_x += jitter_x;
+            stick_l_y += jitter_y;
+
+            if (stick_l_x < -32768) stick_l_x = -32768;
+            if (stick_l_x >  32767) stick_l_x =  32767;
+            if (stick_l_y < -32768) stick_l_y = -32768;
+            if (stick_l_y >  32767) stick_l_y =  32767;
         }
 
         // =========================================================
@@ -105,6 +110,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         //
         //   - Primer segundo: fuerza 25
         //   - Luego: fuerza 12
+        //   (esos "25/12" los multiplicamos a escala int16)
         // =========================================================
         if (final_trig_r)
         {
@@ -115,11 +121,18 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
 
             int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
-            int8_t  recoil_force     = (time_shooting_us < 1000000)
-                                     ? 25   // 1er segundo
-                                     : 12;  // después
 
-            stick_r_y = Range::clamp(stick_r_y - recoil_force, -128, 127);
+            // Escalamos 25/12 a algo razonable de int16
+            const int16_t RECOIL_STRONG = 25 * 200; // 5000 aprox
+            const int16_t RECOIL_WEAK   = 12 * 200; // 2400 aprox
+
+            int16_t recoil_force = (time_shooting_us < 1000000)
+                                 ? RECOIL_STRONG
+                                 : RECOIL_WEAK;
+
+            stick_r_y -= recoil_force;
+            if (stick_r_y < -32768) stick_r_y = -32768;
+            if (stick_r_y >  32767) stick_r_y =  32767;
         }
         else
         {
@@ -162,7 +175,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 6. BOTONES BÁSICOS + REMAPS
         // =========================================================
-        // L1 físico: SOLO macro, NO manda LB normal
+        // L1 físico: SOLO macro (abajo), NO manda LB normal aquí
 
         // R1 normal
         if (btn & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
@@ -184,11 +197,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
         // --- REMAP: SELECT → LB (L1 virtual) ---
-        //     "select es l1 (que se aprete solo l1 no select)"
         if (btn & Gamepad::BUTTON_BACK)
         {
             in_report_.buttons[1] |= XInput::Buttons1::LB;
-            // NO ponemos Buttons0::BACK aquí
+            // No ponemos Buttons0::BACK aquí
         }
 
         // --- TOUCHPAD DETECTADO → BACK/SELECT ---
@@ -236,7 +248,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 in_report_.buttons[1] |= XInput::Buttons1::A;
             }
 
-            // Si ya no se mantiene LB y pasó el segundo extra, apagamos macro
             if (!(btn & Gamepad::BUTTON_LB) && time_reached(jump_end_time))
             {
                 jump_macro_active = false;
