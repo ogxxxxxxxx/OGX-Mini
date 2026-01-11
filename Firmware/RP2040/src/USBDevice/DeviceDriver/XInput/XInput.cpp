@@ -26,38 +26,50 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
     if (gamepad.new_pad_in())
     {
-        // Reiniciamos TODO el in_report_ (incluye report_size correcto)
+        // Reiniciamos TODO el in_report_ (report_size se rellena en el ctor)
         in_report_ = XInput::InReport{};
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
         const uint16_t btn    = gp_in.buttons;
 
-        // ---------- 1. HAIR TRIGGERS (cualquier valor cuenta) ----------
-        // Da igual si trigger_l/r es 0/1 o 0–255, aquí se fuerzan a 0 o 255
+        // =========================================================
+        // 1. HAIR TRIGGERS (cualquier valor cuenta como apretado)
+        // =========================================================
         const bool trig_l_pressed = (gp_in.trigger_l != 0);
         const bool trig_r_pressed = (gp_in.trigger_r != 0);
 
         uint8_t final_trig_l = trig_l_pressed ? 255 : 0;
         uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
-        // ---------- 2. STICKS BASE (int16, como el original) ----------
+        // =========================================================
+        // 2. STICKS BASE (int16, pero rango real -128..127)
+        // =========================================================
         int16_t stick_l_x = gp_in.joystick_lx;
         int16_t stick_l_y = gp_in.joystick_ly;
         int16_t stick_r_x = gp_in.joystick_rx;
         int16_t stick_r_y = gp_in.joystick_ry;
 
-        // ---------- 3. AIM ASSIST (JITTER STICK IZQUIERDO) ----------
+        // =========================================================
+        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO AL DISPARAR)
+        //    Siempre que dispares (R2 o L2) hace micro-movimientos
+        // =========================================================
         if (final_trig_l || final_trig_r)
         {
-            // Pequeño jitter -4..+4, como teníamos antes
-            int16_t jitter_x = static_cast<int16_t>((rand() % 9) - 4);
-            int16_t jitter_y = static_cast<int16_t>((rand() % 9) - 4);
+            // Un jitter más fuerte para que se note:
+            // rango aprox. -12..+12, luego se clamp a [-128,127]
+            int16_t jitter_x = static_cast<int16_t>((rand() % 25) - 12);
+            int16_t jitter_y = static_cast<int16_t>((rand() % 25) - 12);
 
-            stick_l_x += jitter_x;
-            stick_l_y += jitter_y;
+            stick_l_x = Range::clamp<int16_t>(stick_l_x + jitter_x, -128, 127);
+            stick_l_y = Range::clamp<int16_t>(stick_l_y + jitter_y, -128, 127);
         }
 
-        // ---------- 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y) ----------
+        // =========================================================
+        // 4. ANTI-RECOIL DINÁMICO (STICK DERECHO Y, CUANDO R2)
+        //
+        //   - Primer segundo: fuerza 40 (baja MUCHO la mira)
+        //   - Luego: fuerza 20 (baja pero más suave)
+        // =========================================================
         if (final_trig_r)
         {
             if (!is_shooting)
@@ -68,17 +80,20 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
             int64_t time_shooting_us = absolute_time_diff_us(shot_start_time, get_absolute_time());
 
-            // Primer segundo más fuerte, luego más suave (en unidades del stick)
-            int16_t recoil_force = (time_shooting_us < 1000000) ? 25 : 12;
+            int16_t recoil_force = (time_shooting_us < 1000000)
+                                 ? 40   // primer segundo
+                                 : 20;  // después
 
-            stick_r_y -= recoil_force;
+            stick_r_y = Range::clamp<int16_t>(stick_r_y - recoil_force, -128, 127);
         }
         else
         {
             is_shooting = false;
         }
 
-        // ---------- 5. DPAD ----------
+        // =========================================================
+        // 5. DPAD
+        // =========================================================
         switch (gp_in.dpad)
         {
             case Gamepad::DPAD_UP:
@@ -109,48 +124,67 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 break;
         }
 
-        // ---------- 6. BOTONES BÁSICOS ----------
-        // BACK normal (Share estándar)
-        if (btn & Gamepad::BUTTON_BACK)  in_report_.buttons[0] |= XInput::Buttons0::BACK;
-        if (btn & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
-        if (btn & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
-        if (btn & Gamepad::BUTTON_R3)    in_report_.buttons[0] |= XInput::Buttons0::R3;
+        // =========================================================
+        // 6. BOTONES BÁSICOS + REMAPS
+        // =========================================================
+        // L1 físico (LB): se queda igual, y además tiene macro (abajo)
+        if (btn & Gamepad::BUTTON_LB)    in_report_.buttons[1] |= XInput::Buttons1::LB;
 
+        // R1
+        if (btn & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
+
+        // A/B/X/Y
         if (btn & Gamepad::BUTTON_X)     in_report_.buttons[1] |= XInput::Buttons1::X;
         if (btn & Gamepad::BUTTON_A)     in_report_.buttons[1] |= XInput::Buttons1::A;
         if (btn & Gamepad::BUTTON_Y)     in_report_.buttons[1] |= XInput::Buttons1::Y;
         if (btn & Gamepad::BUTTON_B)     in_report_.buttons[1] |= XInput::Buttons1::B;
-        if (btn & Gamepad::BUTTON_LB)    in_report_.buttons[1] |= XInput::Buttons1::LB;
-        if (btn & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
+
+        // Sticks pulsados
+        if (btn & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
+        if (btn & Gamepad::BUTTON_R3)    in_report_.buttons[0] |= XInput::Buttons0::R3;
+
+        // START
+        if (btn & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
+
+        // HOME / PS
         if (btn & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // ---------- 7. TOUCHPAD PS5 -> BACK/SELECT EN XINPUT ----------
-        // OJO: aquí estamos usando BUTTON_MISC como "click raro" (mute/touch),
-        // *además* de BACK normal. Si el DualSense manda el click por MISC,
-        // esto hará que se vea como SELECT en XInput.
-        if (btn & Gamepad::BUTTON_MISC)
+        // --- REMAP: BOTÓN SELECT (BACK) PASA A SER OTRO L1 (LB) ---
+        //     "select es l1 (que se aprete solo l1 no select)"
+        if (btn & Gamepad::BUTTON_BACK)
         {
-            in_report_.buttons[0] |= XInput::Buttons0::BACK;
+            in_report_.buttons[1] |= XInput::Buttons1::LB;
+            // OJO: NO ponemos Buttons0::BACK -> ya no existe SELECT real.
         }
 
-        // ---------- 8. DROP SHOT (R sin L) ----------
+        // --- MUTE (BUTTON_MISC) YA NO APRETA SELECT ---
+        //     Antes: if (btn & Gamepad::BUTTON_MISC) BACK;
+        //     Ahora: no hace nada especial aquí. Si algún día
+        //     sabemos qué botón es el TOUCHPAD real, lo mapeamos
+        //     a Buttons0::BACK ahí.
+
+        // =========================================================
+        // 7. DROP SHOT (R2 sin L2) -> B
+        // =========================================================
         if (final_trig_r && !final_trig_l)
         {
             in_report_.buttons[1] |= XInput::Buttons1::B;
         }
 
-        // ---------- 9. MACRO L1 (LB) -> SPAM JUMP (A) ----------
+        // =========================================================
+        // 8. MACRO L1 (LB) -> SPAM JUMP (A)
+        // =========================================================
         if (btn & Gamepad::BUTTON_LB)
         {
             jump_macro_active = true;
-            jump_end_time     = make_timeout_time_ms(1000); // 1s después de soltar
+            jump_end_time     = make_timeout_time_ms(1000); // 1 s después de soltar
         }
 
         if (jump_macro_active)
         {
             uint64_t now = to_ms_since_boot(get_absolute_time());
 
-            // Velocidad del spam (50ms ≈ 20 pulsos/seg)
+            // Velocidad del spam (50 ms ≈ 20 pulsos/seg)
             if (now - last_tap_time > 50)
             {
                 tap_state     = !tap_state;
@@ -170,7 +204,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
         }
 
-        // ---------- 10. ASIGNAR TRIGGERS Y STICKS FINALES ----------
+        // =========================================================
+        // 9. ASIGNAR TRIGGERS Y STICKS FINALES
+        // =========================================================
         in_report_.trigger_l   = final_trig_l;
         in_report_.trigger_r   = final_trig_r;
 
@@ -179,7 +215,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.joystick_rx = stick_r_x;
         in_report_.joystick_ry = Range::invert(stick_r_y);
 
-        // ---------- 11. ENVIAR REPORTE XINPUT ----------
+        // =========================================================
+        // 10. ENVIAR REPORTE XINPUT
+        // =========================================================
         if (tud_suspended())
         {
             tud_remote_wakeup();
@@ -188,7 +226,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         tud_xinput::send_report(reinterpret_cast<uint8_t*>(&in_report_), sizeof(XInput::InReport));
     }
 
-    // ---------- 12. RUMBLE (igual que original) ----------
+    // =============================================================
+    // 11. RUMBLE (igual que el original)
+    // =============================================================
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
