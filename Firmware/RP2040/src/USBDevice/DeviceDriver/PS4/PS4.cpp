@@ -5,7 +5,7 @@
 
 void PS4Device::initialize()
 {
-    class_driver__ =
+    class_driver_ =
     {
         .name             = TUD_DRV_NAME("PS4"),
         .init             = hidd_init,
@@ -53,7 +53,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     // Report ID 1 (coincide con 0x85,0x01 del descriptor HID)
     report_in_.reportID = 0x01;
 
-    // Touchpad: dejarlo sin dedos para que no salga el punto azul fijo
+    // Touchpad: sin dedos para que no salga el punto azul fijo
     report_in_.gamepad.touchpadActive = 0;
     report_in_.gamepad.touchpadData.p1.unpressed = 1;
     report_in_.gamepad.touchpadData.p2.unpressed = 1;
@@ -87,8 +87,8 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     const bool squareFinal = baseSquare || macroActive;
     const bool circleFinal = baseCircle || macroActive;
 
-    report_in_.buttonWest  = squareFinal ? 1 : 0;             // Square
-    report_in_.buttonEast  = circleFinal ? 1 : 0;             // Circle
+    report_in_.buttonWest  = squareFinal ? 1 : 0;              // Square
+    report_in_.buttonEast  = circleFinal ? 1 : 0;              // Circle
     report_in_.buttonSouth = (btn & Gamepad::BUTTON_A) ? 1 : 0; // Cross
     report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y) ? 1 : 0; // Triangle
 
