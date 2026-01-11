@@ -7,91 +7,70 @@ void PS4Device::initialize()
 {
     class_driver_ =
     {
-        .name = TUD_DRV_NAME("PS4"),
-        .init = hidd_init,
-        .deinit = hidd_deinit,
-        .reset = hidd_reset,
-        .open = hidd_open,
-        .control_xfer_cb = hidd_control_xfer_cb,
-        .xfer_cb = hidd_xfer_cb,
-        .sof = NULL
+        .name             = TUD_DRV_NAME("PS4"),
+        .init             = hidd_init,
+        .deinit           = hidd_deinit,
+        .reset            = hidd_reset,
+        .open             = hidd_open,
+        .control_xfer_cb  = hidd_control_xfer_cb,
+        .xfer_cb          = hidd_xfer_cb,
+        .sof              = nullptr
     };
 }
 
 void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 {
-    (void) idx;
-
     if (gamepad.new_pad_in())
     {
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
-        report_in_ = PS4_DEV::InReport(); // limpia struct y setea valores por defecto
+        report_in_ = PS4Dev::InReport(); // resetea a valores por defecto
 
-        // Sticks
+        // --- DPAD -> Hat ---
+        switch (gp_in.dpad)
+        {
+            case Gamepad::DPAD_UP:          report_in_.hat = PS4Dev::Hat::UP;         break;
+            case Gamepad::DPAD_UP_RIGHT:    report_in_.hat = PS4Dev::Hat::UP_RIGHT;   break;
+            case Gamepad::DPAD_RIGHT:       report_in_.hat = PS4Dev::Hat::RIGHT;      break;
+            case Gamepad::DPAD_DOWN_RIGHT:  report_in_.hat = PS4Dev::Hat::DOWN_RIGHT; break;
+            case Gamepad::DPAD_DOWN:        report_in_.hat = PS4Dev::Hat::DOWN;       break;
+            case Gamepad::DPAD_DOWN_LEFT:   report_in_.hat = PS4Dev::Hat::DOWN_LEFT;  break;
+            case Gamepad::DPAD_LEFT:        report_in_.hat = PS4Dev::Hat::LEFT;       break;
+            case Gamepad::DPAD_UP_LEFT:     report_in_.hat = PS4Dev::Hat::UP_LEFT;    break;
+            default:                        report_in_.hat = PS4Dev::Hat::CENTER;     break;
+        }
+
+        // --- Botones ---
+        uint16_t buttons = 0;
+
+        // Botones face PS
+        if (gp_in.buttons & Gamepad::BUTTON_A)     buttons |= PS4Dev::Buttons::CROSS;    // A -> X (CROSS)
+        if (gp_in.buttons & Gamepad::BUTTON_B)     buttons |= PS4Dev::Buttons::CIRCLE;   // B -> O
+        if (gp_in.buttons & Gamepad::BUTTON_X)     buttons |= PS4Dev::Buttons::SQUARE;   // X -> ☐
+        if (gp_in.buttons & Gamepad::BUTTON_Y)     buttons |= PS4Dev::Buttons::TRIANGLE; // Y -> △
+
+        // Hombros / sticks
+        if (gp_in.buttons & Gamepad::BUTTON_LB)    buttons |= PS4Dev::Buttons::L1;
+        if (gp_in.buttons & Gamepad::BUTTON_RB)    buttons |= PS4Dev::Buttons::R1;
+        if (gp_in.buttons & Gamepad::BUTTON_L3)    buttons |= PS4Dev::Buttons::L3;
+        if (gp_in.buttons & Gamepad::BUTTON_R3)    buttons |= PS4Dev::Buttons::R3;
+
+        // Centrales
+        if (gp_in.buttons & Gamepad::BUTTON_BACK)  buttons |= PS4Dev::Buttons::SHARE;
+        if (gp_in.buttons & Gamepad::BUTTON_START) buttons |= PS4Dev::Buttons::OPTIONS;
+        if (gp_in.buttons & Gamepad::BUTTON_SYS)   buttons |= PS4Dev::Buttons::PS;
+        if (gp_in.buttons & Gamepad::BUTTON_MISC)  buttons |= PS4Dev::Buttons::TOUCHPAD;
+
+        report_in_.buttons = buttons;
+
+        // --- Sticks (0–255) ---
         report_in_.joystick_lx = Scale::int16_to_uint8(gp_in.joystick_lx);
         report_in_.joystick_ly = Scale::int16_to_uint8(gp_in.joystick_ly);
         report_in_.joystick_rx = Scale::int16_to_uint8(gp_in.joystick_rx);
         report_in_.joystick_ry = Scale::int16_to_uint8(gp_in.joystick_ry);
 
-        // D-Pad -> hat
-        uint8_t hat = PS4_DEV::Hat::DPAD_CENTER;
-        switch (gp_in.dpad)
-        {
-            case Gamepad::DPAD_UP:          hat = PS4_DEV::Hat::DPAD_UP; break;
-            case Gamepad::DPAD_UP_RIGHT:    hat = PS4_DEV::Hat::DPAD_UP_RIGHT; break;
-            case Gamepad::DPAD_RIGHT:       hat = PS4_DEV::Hat::DPAD_RIGHT; break;
-            case Gamepad::DPAD_DOWN_RIGHT:  hat = PS4_DEV::Hat::DPAD_DOWN_RIGHT; break;
-            case Gamepad::DPAD_DOWN:        hat = PS4_DEV::Hat::DPAD_DOWN; break;
-            case Gamepad::DPAD_DOWN_LEFT:   hat = PS4_DEV::Hat::DPAD_DOWN_LEFT; break;
-            case Gamepad::DPAD_LEFT:        hat = PS4_DEV::Hat::DPAD_LEFT; break;
-            case Gamepad::DPAD_UP_LEFT:     hat = PS4_DEV::Hat::DPAD_UP_LEFT; break;
-            default:
-                break;
-        }
-        report_in_.hat = hat;
-
-        // Botones frontales (A/B/X/Y → ✕ / ○ / □ / △)
-        if (gp_in.buttons & Gamepad::BUTTON_A)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::CROSS;
-        if (gp_in.buttons & Gamepad::BUTTON_B)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::CIRCLE;
-        if (gp_in.buttons & Gamepad::BUTTON_X)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::SQUARE;
-        if (gp_in.buttons & Gamepad::BUTTON_Y)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::TRIANGLE;
-
-        // L1 / R1
-        if (gp_in.buttons & Gamepad::BUTTON_LB)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::L1;
-        if (gp_in.buttons & Gamepad::BUTTON_RB)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::R1;
-
-        // Click sticks
-        if (gp_in.buttons & Gamepad::BUTTON_L3)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::L3;
-        if (gp_in.buttons & Gamepad::BUTTON_R3)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::R3;
-
-        // Share / Options
-        if (gp_in.buttons & Gamepad::BUTTON_BACK)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::SHARE;
-        if (gp_in.buttons & Gamepad::BUTTON_START)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::OPTIONS;
-
-        // Botón PS / Touchpad click
-        if (gp_in.buttons & Gamepad::BUTTON_SYS)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::PS;
-        if (gp_in.buttons & Gamepad::BUTTON_MISC)
-            report_in_.buttons1 |= PS4_DEV::Buttons1::TOUCHPAD;
-
-        // Triggers analógicos + “botón”
-        report_in_.l2_axis = gp_in.trigger_l;
-        report_in_.r2_axis = gp_in.trigger_r;
-
-        if (gp_in.trigger_l)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::L2;
-        if (gp_in.trigger_r)
-            report_in_.buttons0 |= PS4_DEV::Buttons0::R2;
+        // --- Triggers analógicos ---
+        report_in_.trigger_l = gp_in.trigger_l; // 0–255 si el backend los soporta
+        report_in_.trigger_r = gp_in.trigger_r;
     }
 
     if (tud_suspended())
@@ -101,27 +80,22 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 
     if (tud_hid_ready())
     {
-        tud_hid_report(
-            PS4_DEV::ReportID::INPUT,
-            reinterpret_cast<uint8_t*>(&report_in_),
-            sizeof(PS4_DEV::InReport));
+        tud_hid_report(0,
+                       reinterpret_cast<uint8_t*>(&report_in_),
+                       sizeof(PS4Dev::InReport));
     }
-
-    // De momento ignoramos feedback (rumble/LEDs) en modo device PS4
 }
 
-uint16_t PS4Device::get_report_cb(uint8_t itf,
-                                  uint8_t report_id,
+uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
                                   hid_report_type_t report_type,
-                                  uint8_t *buffer,
-                                  uint16_t reqlen)
+                                  uint8_t *buffer, uint16_t reqlen)
 {
-    (void) itf;
+    (void)itf;
+    (void)report_id;
 
-    if (report_type == HID_REPORT_TYPE_INPUT &&
-        report_id == PS4_DEV::ReportID::INPUT)
+    if (report_type == HID_REPORT_TYPE_INPUT)
     {
-        uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4_DEV::InReport));
+        uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
         std::memcpy(buffer, &report_in_, len);
         return len;
     }
@@ -129,55 +103,51 @@ uint16_t PS4Device::get_report_cb(uint8_t itf,
     return 0;
 }
 
-void PS4Device::set_report_cb(uint8_t itf,
-                              uint8_t report_id,
+void PS4Device::set_report_cb(uint8_t itf, uint8_t report_id,
                               hid_report_type_t report_type,
-                              uint8_t const *buffer,
-                              uint16_t bufsize)
+                              uint8_t const *buffer, uint16_t bufsize)
 {
-    (void) itf;
-    (void) report_id;
-    (void) report_type;
-    (void) buffer;
-    (void) bufsize;
-
-    // Aquí podrías parsear rumble / LEDs si quieres.
+    (void)itf;
+    (void)report_id;
+    (void)report_type;
+    (void)buffer;
+    (void)bufsize;
+    // De momento ignoramos salida (sin rumble)
 }
 
-bool PS4Device::vendor_control_xfer_cb(uint8_t rhport,
-                                       uint8_t stage,
+bool PS4Device::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
                                        tusb_control_request_t const *request)
 {
-    (void) rhport;
-    (void) stage;
-    (void) request;
+    (void)rhport;
+    (void)stage;
+    (void)request;
     return false;
 }
 
-const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index,
-                                                    uint16_t langid)
+const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
-    (void) langid;
-    const char *value =
-        reinterpret_cast<const char*>(PS4_DEV::STRING_DESCRIPTORS[index]);
+    (void)langid;
+
+    const char* value =
+        reinterpret_cast<const char*>(PS4Dev::STRING_DESCRIPTORS[index]);
     return get_string_descriptor(value, index);
 }
 
 const uint8_t* PS4Device::get_descriptor_device_cb()
 {
-    return PS4_DEV::DEVICE_DESCRIPTORS;
+    return PS4Dev::DEVICE_DESCRIPTORS;
 }
 
 const uint8_t* PS4Device::get_hid_descriptor_report_cb(uint8_t itf)
 {
-    (void) itf;
-    return PS4_DEV::REPORT_DESCRIPTORS;
+    (void)itf;
+    return PS4Dev::REPORT_DESCRIPTORS;
 }
 
 const uint8_t* PS4Device::get_descriptor_configuration_cb(uint8_t index)
 {
-    (void) index;
-    return PS4_DEV::CONFIGURATION_DESCRIPTORS;
+    (void)index;
+    return PS4Dev::CONFIGURATION_DESCRIPTORS;
 }
 
 const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
