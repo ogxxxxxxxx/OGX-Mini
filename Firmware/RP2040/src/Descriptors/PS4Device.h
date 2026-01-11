@@ -11,18 +11,18 @@ namespace PS4Dev
     // Botones (16 bits)
     namespace Buttons
     {
-        static constexpr uint16_t CROSS     = 1 << 0;  // Button 1
-        static constexpr uint16_t CIRCLE    = 1 << 1;  // Button 2
-        static constexpr uint16_t SQUARE    = 1 << 2;  // Button 3
+        static constexpr uint16_t  CIRCLE    = 1 << 0;  // Button 1
+        static constexpr uint16_t SQUARE    = 1 << 1;  // Button 2
+        static constexpr uint16_t   CROSS  = 1 << 2;  // Button 3
         static constexpr uint16_t TRIANGLE  = 1 << 3;  // Button 4
         static constexpr uint16_t L1        = 1 << 4;  // Button 5
         static constexpr uint16_t R1        = 1 << 5;  // Button 6
-        static constexpr uint16_t L3        = 1 << 6;  // Button 7
-        static constexpr uint16_t R3        = 1 << 7;  // Button 8
+        static constexpr uint16_t  PS    = 1 << 6;  // Button 7
+        static constexpr uint16_t  TOUCHPAD        = 1 << 7;  // Button 8
         static constexpr uint16_t SHARE     = 1 << 8;  // Button 9
         static constexpr uint16_t OPTIONS   = 1 << 9;  // Button 10
-        static constexpr uint16_t PS        = 1 << 10; // Button 11
-        static constexpr uint16_t TOUCHPAD  = 1 << 11; // Button 12
+        static constexpr uint16_t  L3        = 1 << 10; // Button 11
+        static constexpr uint16_t R3 = 1 << 11; // Button 12
     }
 
     // Hat: 0–7 direcciones, 8 = centrado
