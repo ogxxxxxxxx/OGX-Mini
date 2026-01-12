@@ -24,10 +24,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static uint64_t        last_tap_time = 0;
     static bool            tap_state    = false;
 
-    // Estado para AIM ASSIST (más lento/suave)
+    // Estado para AIM ASSIST (más lento/suave y rotacional)
     static uint64_t        aim_last_time_ms = 0;
     static int16_t         aim_jitter_x = 0;
     static int16_t         aim_jitter_y = 0;
+    static uint8_t         aim_step     = 0;  // índice del patrón circular
 
     if (gamepad.new_pad_in())
     {
@@ -48,17 +49,12 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         // =========================================================
         // 2. STICKS BASE EN ESPACIO "FINAL" (el que ve el juego)
+        //    + DEADZONE PARA QUITAR DRIFT
         // =========================================================
-        // Guardamos base_* para poder calcular magnitudes sin el jitter
         int16_t base_lx = gp_in.joystick_lx;
         int16_t base_ly = Range::invert(gp_in.joystick_ly);
         int16_t base_rx = gp_in.joystick_rx;
         int16_t base_ry = Range::invert(gp_in.joystick_ry);
-
-        int16_t out_lx = base_lx;
-        int16_t out_ly = base_ly;
-        int16_t out_rx = base_rx;
-        int16_t out_ry = base_ry;
 
         auto clamp16 = [](int16_t v) -> int16_t {
             if (v < -32768) return -32768;
@@ -66,21 +62,46 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitud^2 de cada stick (para zona de cancelación)
-        int32_t magL2 = static_cast<int32_t>(base_lx) * base_lx +
-                        static_cast<int32_t>(base_ly) * base_ly;
-        int32_t magR2 = static_cast<int32_t>(base_rx) * base_rx +
-                        static_cast<int32_t>(base_ry) * base_ry;
+        auto sq = [](int16_t v) -> int32_t {
+            return static_cast<int32_t>(v) * v;
+        };
+
+        int32_t magL2 = sq(base_lx) + sq(base_ly);
+        int32_t magR2 = sq(base_rx) + sq(base_ry);
+
+        // Deadzone para drift (aprox según tu foto)
+        static const int16_t DZ_L  = 7000;                    // ~20% stick izq
+        static const int32_t DZ_L2 = static_cast<int32_t>(DZ_L) * DZ_L;
+
+        static const int16_t DZ_R  = 3000;                    // ~9% stick der
+        static const int32_t DZ_R2 = static_cast<int32_t>(DZ_R) * DZ_R;
+
+        if (magL2 < DZ_L2)
+        {
+            base_lx = 0;
+            base_ly = 0;
+            magL2   = 0;
+        }
+
+        if (magR2 < DZ_R2)
+        {
+            base_rx = 0;
+            base_ry = 0;
+            magR2   = 0;
+        }
+
+        int16_t out_lx = base_lx;
+        int16_t out_ly = base_ly;
+        int16_t out_rx = base_rx;
+        int16_t out_ry = base_ry;
 
         // =========================================================
-        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
+        // 3. STICKY AIM ROTACIONAL (STICK IZQ, SOLO CON R2)
         //
         //   - Solo si el stick está dentro del 80% del recorrido
-        //   - Si lo empujas muy fuerte (flick), NO hay jitter
-        //   - Jitter fuerte pero más lento (35 ms)
+        //   - Patrón circular, fuerte pero más lento
         // =========================================================
         {
-            // 80% del recorrido del stick
             static const int16_t AIM_CENTER_MAX  = 26000;  // ~0.8 * 32767
             static const int32_t AIM_CENTER_MAX2 =
                 static_cast<int32_t>(AIM_CENTER_MAX) * AIM_CENTER_MAX;
@@ -89,18 +110,20 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             {
                 uint64_t now_ms = to_ms_since_boot(get_absolute_time());
 
-                // Cambiamos el vector de jitter solo cada ~35 ms
+                // Cambiamos el vector cada ~35 ms
                 if (now_ms - aim_last_time_ms > 35)
                 {
                     aim_last_time_ms = now_ms;
 
-                    const int16_t JITTER = 6000; // fuerza del aim assist
-                    aim_jitter_x = static_cast<int16_t>(
-                        (rand() % (2 * JITTER + 1)) - JITTER
-                    );
-                    aim_jitter_y = static_cast<int16_t>(
-                        (rand() % (2 * JITTER + 1)) - JITTER
-                    );
+                    const int16_t R = 6500; // radio del círculo (fuerte)
+                    static const int16_t patternX[8] =
+                        {  R,  R,   0, -R, -R, -R,   0,  R };
+                    static const int16_t patternY[8] =
+                        {  0,  R,   R,  R,  0, -R, -R, -R };
+
+                    aim_jitter_x = patternX[aim_step];
+                    aim_jitter_y = patternY[aim_step];
+                    aim_step     = (aim_step + 1) & 0x07; // %8
                 }
 
                 out_lx = clamp16(static_cast<int16_t>(out_lx + aim_jitter_x));
@@ -108,11 +131,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
             else
             {
-                // Fuera del centro o sin disparar → sin jitter
+                // Fuera de zona o sin disparar → sin jitter
                 aim_jitter_x = 0;
                 aim_jitter_y = 0;
-                out_lx = base_lx;
-                out_ly = base_ly;
+                out_lx       = base_lx;
+                out_ly       = base_ly;
             }
         }
 
@@ -120,14 +143,16 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // 4. ANTI-RECOIL DINÁMICO (EJE Y DERECHO, CUANDO R2)
         //
         //   - Solo si el stick derecho está dentro del 85% del recorrido
-        //   - Primer 1.5 s:  fuerza 12000
-        //   - Después:        fuerza 10000 y se queda así
+        //     y no lo estás moviendo mucho en vertical.
+        //   - 0–1.5 s:  fuerza 12500
+        //   - >1.5 s:   fuerza 11200 (baja menos pero se mantiene)
         // =========================================================
         {
-            // 85% del recorrido del stick derecho
             static const int16_t RECOIL_MAX   = 28000; // ~0.85 * 32767
             static const int32_t RECOIL_MAX2 =
                 static_cast<int32_t>(RECOIL_MAX) * RECOIL_MAX;
+
+            static const int16_t RECOIL_Y_ZONE = 20000; // si mueves mucho el stick, no tocamos
 
             if (final_trig_r)
             {
@@ -137,7 +162,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                     shot_start_time = get_absolute_time();
                 }
 
-                if (magR2 <= RECOIL_MAX2)
+                int16_t abs_base_ry = (base_ry >= 0) ? base_ry : -base_ry;
+
+                if (magR2 <= RECOIL_MAX2 && abs_base_ry <= RECOIL_Y_ZONE)
                 {
                     int64_t time_shooting_us = absolute_time_diff_us(
                         shot_start_time,
@@ -153,14 +180,19 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                             ? RECOIL_STRONG
                             : RECOIL_WEAK;
 
-                    // Restamos para empujar hacia ABAJO
-                    out_ry = clamp16(static_cast<int16_t>(out_ry - recoil_force));
+                    // Restamos para empujar la mira hacia ABAJO
+                    out_ry = clamp16(static_cast<int16_t>(base_ry - recoil_force));
                 }
-                // Si magR2 > RECOIL_MAX2 no aplicamos recoil (pero mantenemos el tiempo)
+                else
+                {
+                    // Lo estás moviendo mucho → no tocamos, evitamos bug raro
+                    out_ry = base_ry;
+                }
             }
             else
             {
                 is_shooting = false;
+                out_ry      = base_ry;
             }
         }
 
@@ -219,7 +251,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
 
         // --- BOTÓN PLAYSTATION (SYS) ---
-        // HOME + DPAD IZQ y DERECHA mantenidos mientras lo pulses
+        // HOME + DPAD IZQ y DERECHA MANTENIDOS mientras lo pulses
         if (btn & Gamepad::BUTTON_SYS)
         {
             in_report_.buttons[1] |= XInput::Buttons1::HOME;
