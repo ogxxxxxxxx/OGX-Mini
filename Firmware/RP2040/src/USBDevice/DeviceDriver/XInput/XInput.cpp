@@ -18,25 +18,25 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static absolute_time_t shot_start_time;
     static bool            is_shooting = false;
 
-    // Macro L1 (spam X/A, con cola de 1s)
+    // L1 -> macro X (A) con cola de 1s
     static bool            l1_macro_active   = false;
     static absolute_time_t l1_end_time;
     static uint64_t        l1_last_tap_ms    = 0;
     static bool            l1_tap_state      = false;
 
-    // Estado para AIM ASSIST (stick izquierdo)
+    // AIM ASSIST (stick izquierdo)
     static uint64_t        aim_last_time_ms  = 0;
     static int16_t         aim_jitter_x      = 0;
     static int16_t         aim_jitter_y      = 0;
 
-    // Estado para R2 turbo (X/A) con bloqueo por L2
+    // R2 turbo X (A) con bloqueo si hay L2
     static bool            r2_held           = false;
     static bool            r2_turbo_active   = false;
     static bool            r2_blocked_by_l2  = false;
     static uint64_t        r2_last_tap_ms    = 0;
     static bool            r2_tap_state      = false;
 
-    // Estado para TRIÁNGULO turbo (doble tap)
+    // Triángulo turbo (doble tap)
     static bool            tri_was_pressed   = false;
     static bool            tri_turbo_active  = false;
     static uint64_t        tri_last_press_ms = 0;
@@ -45,7 +45,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
     if (gamepad.new_pad_in())
     {
-        // Reinicia todo el reporte (el ctor pone report_size)
+        // Reinicia todo el reporte
         in_report_ = XInput::InReport{};
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
@@ -64,7 +64,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         uint8_t final_trig_r = trig_r_pressed ? 255 : 0;
 
         // =========================================================
-        // 2. STICKS BASE EN ESPACIO "FINAL" (el que ve el juego)
+        // 2. STICKS BASE (espacio final, el que ve el juego)
         // =========================================================
         int16_t base_lx = gp_in.joystick_lx;
         int16_t base_ly = Range::invert(gp_in.joystick_ly);
@@ -82,18 +82,18 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitud^2 de cada stick (para zonas de cancelación / límites)
+        // Magnitud^2 de cada stick (para límites 80% / 95%)
         int32_t magL2 = static_cast<int32_t>(base_lx) * base_lx +
                         static_cast<int32_t>(base_ly) * base_ly;
         int32_t magR2 = static_cast<int32_t>(base_rx) * base_rx +
                         static_cast<int32_t>(base_ry) * base_ry;
 
         // =========================================================
-        // 3. ESTADO R2 TURBO (X/A) CON BLOQUEO POR L2
+        // 3. R2 TURBO X (A) + BLOQUEO POR L2
         //
-        //  - R2 SOLO  → turbo X/A inmediato.
-        //  - Si en cualquier momento, mientras R2 está mantenido,
-        //    L2 está apretado → se bloquea el turbo hasta soltar R2.
+        //  - R2 solo  → turbo X (A) inmediato.
+        //  - Si aparece L2 mientras R2 está presionado → se bloquea
+        //    el turbo hasta soltar R2.
         // =========================================================
         static const uint64_t R2_TURBO_INTERVAL_MS = 50;
 
@@ -102,14 +102,14 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             if (!r2_held)
             {
                 r2_held          = true;
-                r2_blocked_by_l2 = trig_l_pressed;      // si inicia con L2, bloqueado
-                r2_turbo_active  = !r2_blocked_by_l2;   // turbo inmediato solo si NO hay L2
+                r2_blocked_by_l2 = trig_l_pressed;
+                r2_turbo_active  = !r2_blocked_by_l2;   // turbo solo si NO hay L2
                 r2_last_tap_ms   = now_ms;
                 r2_tap_state     = true;                // primer pulso inmediato
             }
             else
             {
-                // Si aparece L2 mientras R2 está mantenido, bloquear turbo
+                // Si aparece L2 mientras R2 está mantenido → bloquear turbo
                 if (trig_l_pressed)
                 {
                     r2_blocked_by_l2 = true;
@@ -127,7 +127,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 4. TRIÁNGULO TURBO (doble tap < 300ms, segundo mantenido)
+        // 4. TRIÁNGULO TURBO (doble tap ≤ 300 ms, segundo mantenido)
         // =========================================================
         static const uint64_t TRI_DOUBLE_TAP_MAX_MS = 300;
         static const uint64_t TRI_TURBO_INTERVAL_MS = 50;
@@ -138,17 +138,15 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         {
             if (!tri_was_pressed)
             {
-                // Flanco de subida
                 if (now_ms - tri_last_press_ms <= TRI_DOUBLE_TAP_MAX_MS)
                 {
-                    // Doble tap rápido → activar turbo mientras se mantenga
+                    // doble tap → activar turbo
                     tri_turbo_active = true;
                     tri_last_tap_ms  = now_ms;
-                    tri_tap_state    = true;  // primer pulso inmediato
+                    tri_tap_state    = true;   // primer pulso inmediato
                 }
                 else
                 {
-                    // Tap normal → Y normal
                     tri_turbo_active = false;
                     tri_tap_state    = false;
                 }
@@ -165,11 +163,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 5. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
+        // 5. AIM ASSIST (stick izquierdo, solo con R2)
         //
-        //   - Solo si el stick está dentro del 80% del recorrido.
-        //   - Si lo empujas muy fuerte (>80%), NO hay jitter (para que no "se vuelva loco").
-        //   - Jitter fuerte pero más lento (cada 35 ms aprox).
+        //  - Solo si el stick está dentro del 80% del recorrido.
+        //  - Si lo empujas fuerte (>80%), NO hay jitter.
         // =========================================================
         {
             static const int16_t AIM_CENTER_MAX  = 26000;  // ~0.8 * 32767
@@ -182,7 +179,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 {
                     aim_last_time_ms = now_ms;
 
-                    const int16_t JITTER = 6000; // fuerza del aim assist
+                    const int16_t JITTER = 6000;
                     aim_jitter_x = static_cast<int16_t>(
                         (rand() % (2 * JITTER + 1)) - JITTER
                     );
@@ -196,7 +193,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
             else
             {
-                // Fuera del centro o sin R2 → sin jitter
                 aim_jitter_x = 0;
                 aim_jitter_y = 0;
                 out_lx       = base_lx;
@@ -205,26 +201,29 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 6. ANTI-RECOIL (EJE Y DERECHO, CUANDO R2)
+        // 6. ANTI-RECOIL (stick derecho Y, con R2 PERO NO en turbo)
         //
-        //   - Solo si el stick derecho está dentro del ~80% del recorrido.
-        //   - Primer 1.5 s:  fuerza fuerte (12500).
-        //   - Después:        fuerza un poco menor (10000),
-        //                     siempre empujando hacia abajo sin “rebotar”.
+        //  - Solo si el stick derecho está dentro del 95% del recorrido.
+        //  - Primer 1.5 s: fuerza 12500.
+        //  - Después: fuerza 10000.
+        //  - Siempre en la MISMA dirección del stick (no cambia de signo)
+        //  - Si R2 está en modo turbo X, NO hay anti-recoil.
         // =========================================================
         {
-            // ~80% del recorrido
-            static const int16_t RECOIL_MAX   = 26214; // ~0.8 * 32767
+            static const int16_t RECOIL_MAX   = 31100; // ~0.95 * 32767
             static const int32_t RECOIL_MAX2 =
                 static_cast<int32_t>(RECOIL_MAX) * RECOIL_MAX;
 
-            if (final_trig_r)
+            if (final_trig_r && !r2_turbo_active)   // <--- aquí se desactiva con turbo
             {
                 if (!is_shooting)
                 {
                     is_shooting     = true;
                     shot_start_time = now_time;
                 }
+
+                // valor base
+                out_ry = base_ry;
 
                 if (magR2 <= RECOIL_MAX2)
                 {
@@ -242,18 +241,20 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                             ? RECOIL_STRONG
                             : RECOIL_WEAK;
 
-                    // Empuja hacia ABAJO partiendo del valor real del stick
-                    out_ry = clamp16(static_cast<int16_t>(base_ry - recoil_force));
-                }
-                else
-                {
-                    // Cerca del 100 % del recorrido → dejamos al usuario total control
-                    out_ry = base_ry;
+                    // misma dirección del stick
+                    int32_t sign = (base_ry >= 0) ? 1 : -1;
+                    int32_t mag  = (base_ry >= 0) ? base_ry : -base_ry;
+
+                    mag += recoil_force;
+                    if (mag > RECOIL_MAX) mag = RECOIL_MAX;
+
+                    out_ry = (int16_t)(sign * mag);
                 }
             }
             else
             {
                 is_shooting = false;
+                out_ry      = base_ry;
             }
         }
 
@@ -293,8 +294,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 8. BOTONES BÁSICOS + REMAPS
         // =========================================================
-        // L1 físico: SOLO macro (más abajo), NO mandamos LB normal aquí
-
         // R1 normal
         if (btn & Gamepad::BUTTON_RB)
             in_report_.buttons[1] |= XInput::Buttons1::RB;
@@ -307,8 +306,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_B)
             in_report_.buttons[1] |= XInput::Buttons1::B;
 
-        // Triángulo normal SOLO si NO está en turbo
-        if (tri_pressed && !tri_turbo_active)
+        // Triángulo normal (Y)
+        if (tri_pressed)
             in_report_.buttons[1] |= XInput::Buttons1::Y;
 
         // Sticks pulsados
@@ -321,8 +320,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (btn & Gamepad::BUTTON_START)
             in_report_.buttons[0] |= XInput::Buttons0::START;
 
-        // --- BOTÓN PLAYSTATION (SYS) ---
-        // HOME + DPAD IZQ y DERECHA mantenidos mientras lo pulses
+        // BOTÓN PLAYSTATION: HOME + flecha IZQ y DER mantenidas
         if (btn & Gamepad::BUTTON_SYS)
         {
             in_report_.buttons[1] |= XInput::Buttons1::HOME;
@@ -330,39 +328,32 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                                       XInput::Buttons0::DPAD_RIGHT);
         }
 
-        // --- REMAP: SELECT → LB (L1 virtual) ---
+        // SELECT → LB virtual
         if (btn & Gamepad::BUTTON_BACK)
         {
             in_report_.buttons[1] |= XInput::Buttons1::LB;
-            // No ponemos Buttons0::BACK aquí
         }
 
-        // --- MUTE (BUTTON_MISC) → SELECT/BACK ---
+        // MUTE (BUTTON_MISC) → SELECT/BACK
         if (btn & Gamepad::BUTTON_MISC)
         {
             in_report_.buttons[0] |= XInput::Buttons0::BACK;
         }
 
         // =========================================================
-        // 9. MACRO L1 (LB físico) -> SPAM X/A
-        //     - Empieza al tiro.
-        //     - Sigue 1 segundo después de soltar L1.
+        // 9. L1 MACRO → X/A TURBO + COLA 1s
         // =========================================================
+        static const uint64_t L1_TURBO_INTERVAL_MS = 50;
+
         if (btn & Gamepad::BUTTON_LB)
         {
-            if (!l1_macro_active)
-            {
-                l1_macro_active = true;
-                l1_last_tap_ms  = now_ms;
-                l1_tap_state    = true;   // primer tap inmediato
-            }
-            // Extiende la cola 1s desde la última vez que se vio LB
-            l1_end_time = make_timeout_time_ms(1000);
+            l1_macro_active = true;
+            l1_end_time     = make_timeout_time_ms(1000); // 1 s después de soltar
         }
 
         if (l1_macro_active)
         {
-            if (now_ms - l1_last_tap_ms > 50)  // ≈ 20 pulsos/seg
+            if (now_ms - l1_last_tap_ms > L1_TURBO_INTERVAL_MS)
             {
                 l1_last_tap_ms = now_ms;
                 l1_tap_state   = !l1_tap_state;
@@ -370,10 +361,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
             if (l1_tap_state)
             {
-                in_report_.buttons[1] |= XInput::Buttons1::A; // X/A turbo
+                // X de PS → A de XInput
+                in_report_.buttons[1] |= XInput::Buttons1::A;
             }
 
-            // Al soltar LB, la macro sigue hasta que pase 1s
             if (!(btn & Gamepad::BUTTON_LB) && time_reached(l1_end_time))
             {
                 l1_macro_active = false;
@@ -382,9 +373,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 10. TURBO R2 (X/A) SI NO ESTÁ BLOQUEADO POR L2
+        // 10. R2 TURBO X (A) – salida
         // =========================================================
-        if (r2_turbo_active && !r2_blocked_by_l2)
+        if (r2_turbo_active)
         {
             if (now_ms - r2_last_tap_ms > R2_TURBO_INTERVAL_MS)
             {
@@ -394,14 +385,14 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
             if (r2_tap_state)
             {
-                in_report_.buttons[1] |= XInput::Buttons1::A; // X/A turbo
+                in_report_.buttons[1] |= XInput::Buttons1::A;
             }
         }
 
         // =========================================================
-        // 11. TURBO TRIÁNGULO (Y)
+        // 11. TRIÁNGULO TURBO – salida
         // =========================================================
-        if (tri_pressed && tri_turbo_active)
+        if (tri_turbo_active)
         {
             if (now_ms - tri_last_tap_ms > TRI_TURBO_INTERVAL_MS)
             {
@@ -490,12 +481,10 @@ bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
     return false;
 }
 
-const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index,
-                                                        uint16_t langid)
+const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
     (void)langid;
-    const char *value =
-        reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
+    const char *value = reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
     return get_string_descriptor(value, index);
 }
 
