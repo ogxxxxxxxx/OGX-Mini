@@ -18,8 +18,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static absolute_time_t shot_start_time;
     static bool            is_shooting = false;
 
-    // Macro L1 (spam X/A)
+    // Macro L1 (spam X/A, con cola de 1s)
     static bool            l1_macro_active   = false;
+    static absolute_time_t l1_end_time;
     static uint64_t        l1_last_tap_ms    = 0;
     static bool            l1_tap_state      = false;
 
@@ -92,7 +93,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         //
         //  - R2 SOLO  → turbo X/A inmediato.
         //  - Si en cualquier momento, mientras R2 está mantenido,
-        //    L2 está apretado → se bloquea el turbo hasta que sueltes R2.
+        //    L2 está apretado → se bloquea el turbo hasta soltar R2.
         // =========================================================
         static const uint64_t R2_TURBO_INTERVAL_MS = 50;
 
@@ -108,7 +109,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
             else
             {
-                // Si alguna vez aparece L2 mientras R2 está mantenido, bloquear turbo
+                // Si aparece L2 mientras R2 está mantenido, bloquear turbo
                 if (trig_l_pressed)
                 {
                     r2_blocked_by_l2 = true;
@@ -206,13 +207,14 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 6. ANTI-RECOIL (EJE Y DERECHO, CUANDO R2)
         //
-        //   - Solo si el stick derecho está dentro del 95% del recorrido.
+        //   - Solo si el stick derecho está dentro del ~80% del recorrido.
         //   - Primer 1.5 s:  fuerza fuerte (12500).
-        //   - Después:        fuerza un poco menor (10000), sin seguir bajando tanto.
-        //   - Siempre se parte desde base_ry → no se "buguea" subiendo/bajando.
+        //   - Después:        fuerza un poco menor (10000),
+        //                     siempre empujando hacia abajo sin “rebotar”.
         // =========================================================
         {
-            static const int16_t RECOIL_MAX   = 31128; // ~0.95 * 32767
+            // ~80% del recorrido
+            static const int16_t RECOIL_MAX   = 26214; // ~0.8 * 32767
             static const int32_t RECOIL_MAX2 =
                 static_cast<int32_t>(RECOIL_MAX) * RECOIL_MAX;
 
@@ -233,7 +235,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
                     static const int64_t STRONG_DURATION_US = 1500000; // 1.5 s
                     static const int16_t RECOIL_STRONG      = 12500;
-                    static const int16_t RECOIL_WEAK        = 11750;
+                    static const int16_t RECOIL_WEAK        = 10000;
 
                     int16_t recoil_force =
                         (time_shooting_us < STRONG_DURATION_US)
@@ -245,7 +247,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 }
                 else
                 {
-                    // Fuera del 95 % → sin recoil, pero mantenemos el tiempo
+                    // Cerca del 100 % del recorrido → dejamos al usuario total control
                     out_ry = base_ry;
                 }
             }
@@ -291,7 +293,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 8. BOTONES BÁSICOS + REMAPS
         // =========================================================
-        // L1 físico: SOLO macro (turbo de X/A) → NO mandamos LB normal
+        // L1 físico: SOLO macro (más abajo), NO mandamos LB normal aquí
 
         // R1 normal
         if (btn & Gamepad::BUTTON_RB)
@@ -342,7 +344,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 9. MACRO L1 (LB físico) -> SPAM X/A INSTANTÁNEO
+        // 9. MACRO L1 (LB físico) -> SPAM X/A
+        //     - Empieza al tiro.
+        //     - Sigue 1 segundo después de soltar L1.
         // =========================================================
         if (btn & Gamepad::BUTTON_LB)
         {
@@ -352,11 +356,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 l1_last_tap_ms  = now_ms;
                 l1_tap_state    = true;   // primer tap inmediato
             }
-        }
-        else
-        {
-            l1_macro_active = false;
-            l1_tap_state    = false;
+            // Extiende la cola 1s desde la última vez que se vio LB
+            l1_end_time = make_timeout_time_ms(1000);
         }
 
         if (l1_macro_active)
@@ -370,6 +371,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             if (l1_tap_state)
             {
                 in_report_.buttons[1] |= XInput::Buttons1::A; // X/A turbo
+            }
+
+            // Al soltar LB, la macro sigue hasta que pase 1s
+            if (!(btn & Gamepad::BUTTON_LB) && time_reached(l1_end_time))
+            {
+                l1_macro_active = false;
+                l1_tap_state    = false;
             }
         }
 
