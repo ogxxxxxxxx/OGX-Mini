@@ -152,10 +152,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // 4. ANTI-RECOIL (STICK DERECHO Y, SOLO R2 SIN MACRO)
         //
         //   - Solo si |Y| < 90 % del recorrido → si lo llevas al fondo,
-        //     se respeta tu movimiento y se "sale" el anti-recoil.
+        //     se respeta tu movimiento.
         //   - Primer 1.5 s: fuerza fuerte
         //   - Después: fuerza un poco menor, estable
-        //   - Siempre empuja hacia ABAJO (no vuelve loco el stick).
+        //   - Siempre empuja hacia ABAJO.
         // =========================================================
         {
             static const int16_t RECOIL_MAX  = 29500;              // ~90 %
@@ -183,7 +183,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                     int16_t recoil_force =
                         (time_us < STRONG_US) ? RECOIL_STRONG : RECOIL_WEAK;
 
-                    // IMPORTANTE: restamos para hacer la mira MÁS ABAJO
+                    // Restamos para empujar hacia ABAJO
                     int32_t val = (int32_t)base_ry - recoil_force;
 
                     // Limitamos a ±90 % para que no salte de extremo a extremo
@@ -431,7 +431,7 @@ void XInputDevice::set_report_cb(uint8_t itf,
     (void)report_id;
     (void)report_type;
     (void)buffer;
-    (void)bufsize);
+    (void)bufsize;
 }
 
 bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
