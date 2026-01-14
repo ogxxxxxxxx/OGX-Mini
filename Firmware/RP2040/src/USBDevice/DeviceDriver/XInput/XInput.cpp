@@ -44,6 +44,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static int16_t  aim_jitter_x     = 0;
     static int16_t  aim_jitter_y     = 0;
 
+    // Suavizado del stick derecho (para drift)
+    static int16_t  smooth_rx = 0;
+    static int16_t  smooth_ry = 0;
+
     if (gamepad.new_pad_in())
     {
         // Reinicia todo el reporte
@@ -93,10 +97,36 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 2. STICKS BASE (coordenadas finales que ve el juego)
         // =========================================================
+        // Stick izquierdo sin cambios
         int16_t base_lx = gp_in.joystick_lx;
         int16_t base_ly = Range::invert(gp_in.joystick_ly);
-        int16_t base_rx = gp_in.joystick_rx;
-        int16_t base_ry = Range::invert(gp_in.joystick_ry);
+
+        // Stick derecho: aplicamos deadzone + suavizado para reducir drift
+        int16_t raw_rx = gp_in.joystick_rx;
+        int16_t raw_ry = Range::invert(gp_in.joystick_ry);
+
+        // Deadzone radial ~10 % para el stick derecho
+        static const int16_t R_DEADZONE  = 3200; // ~10 % de 32767
+        static const int32_t R_DEADZONE2 =
+            (int32_t)R_DEADZONE * (int32_t)R_DEADZONE;
+
+        int32_t magR2_raw =
+            (int32_t)raw_rx * raw_rx +
+            (int32_t)raw_ry * raw_ry;
+
+        if (magR2_raw < R_DEADZONE2)
+        {
+            // Movimiento muy pequeño → lo tratamos como 0 (limpia drift suave)
+            raw_rx = 0;
+            raw_ry = 0;
+        }
+
+        // Suavizado: 75% valor anterior + 25% valor nuevo
+        smooth_rx = (int16_t)(( (int32_t)smooth_rx * 3 + raw_rx ) / 4);
+        smooth_ry = (int16_t)(( (int32_t)smooth_ry * 3 + raw_ry ) / 4);
+
+        int16_t base_rx = smooth_rx;
+        int16_t base_ry = smooth_ry;
 
         int16_t out_lx = base_lx;
         int16_t out_ly = base_ly;
@@ -109,9 +139,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitudes (para límites de aim/anti-recoil)
-        int32_t magL2 = (int32_t)base_lx * base_lx +
-                        (int32_t)base_ly * base_ly;
+        // Magnitud del stick izquierdo (para límites de aim assist)
+        int32_t magL2 =
+            (int32_t)base_lx * base_lx +
+            (int32_t)base_ly * base_ly;
 
         // =========================================================
         // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
@@ -125,7 +156,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
             if (final_trig_r && magL2 <= AIM_CENTER_MAX2)
             {
-                // Cambiamos vector de jitter cada ~35 ms
+                // Cambiamos vector de jitter cada ~25 ms
                 if (now_ms - aim_last_time_ms > 25)
                 {
                     aim_last_time_ms = now_ms;
@@ -158,10 +189,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         //   - Siempre empuja hacia ABAJO.
         // =========================================================
         {
-            static const int16_t RECOIL_MAX  = 31128;              // ~90 %
-            static const int64_t STRONG_US  = 1500000;             // 1.5 s
-            static const int16_t RECOIL_STRONG = 11150;
-            static const int16_t RECOIL_WEAK   = 10600;
+            static const int16_t RECOIL_MAX    = 31128;  // ~95 %
+            static const int64_t STRONG_US    = 1500000; // 1.5 s
+
+            // ↓↓↓ AQUÍ BAJAMOS LA FUERZA ↓↓↓
+            static const int16_t RECOIL_STRONG = 8000;   // antes 11150
+            static const int16_t RECOIL_WEAK   = 7000;   // antes 10600
+            // ↑↑↑
 
             int16_t abs_ry = (base_ry >= 0) ? base_ry : (int16_t)-base_ry;
 
@@ -186,7 +220,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                     // Restamos para empujar hacia ABAJO
                     int32_t val = (int32_t)base_ry - recoil_force;
 
-                    // Limitamos a ±90 % para que no salte de extremo a extremo
+                    // Limitamos a ±95 % para que no salte de extremo a extremo
                     if (val < -RECOIL_MAX) val = -RECOIL_MAX;
                     if (val >  RECOIL_MAX) val =  RECOIL_MAX;
 
@@ -194,7 +228,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 }
                 else
                 {
-                    // Ya estás >90 % → no tocamos el stick
+                    // Ya estás >95 % → no tocamos el stick
                     out_ry = base_ry;
                 }
             }
@@ -241,10 +275,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // =========================================================
         // 6. BOTONES BÁSICOS + REMAPS
         // =========================================================
-        const bool lb_pressed   = (btn & Gamepad::BUTTON_LB) != 0;
-        const bool rb_pressed   = (btn & Gamepad::BUTTON_RB) != 0;
-        const bool tri_pressed  = (btn & Gamepad::BUTTON_Y)  != 0;
-        const bool sys_pressed  = (btn & Gamepad::BUTTON_SYS) != 0;
+        const bool lb_pressed   = (btn & Gamepad::BUTTON_LB)   != 0;
+        const bool rb_pressed   = (btn & Gamepad::BUTTON_RB)   != 0;
+        const bool tri_pressed  = (btn & Gamepad::BUTTON_Y)    != 0;
+        const bool sys_pressed  = (btn & Gamepad::BUTTON_SYS)  != 0;
         const bool back_pressed = (btn & Gamepad::BUTTON_BACK) != 0;
 
         // R1 normal
