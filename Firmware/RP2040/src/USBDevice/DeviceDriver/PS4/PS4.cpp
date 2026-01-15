@@ -80,8 +80,8 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     static bool            jitterActive   = false;
     static absolute_time_t jitterStart;
 
-    static constexpr int32_t JITTER_US  = 22000; // 22 ms (15k-30k recomendado)
-    static constexpr int     JITTER_AMP = 14;    // un poquito más fuerte
+    static constexpr int32_t JITTER_US  = 30000; // 22 ms (15k-30k recomendado)
+    static constexpr int     JITTER_AMP = 15;    // un poquito más fuerte
 
     // Solo cuando presionas CUADRADO (no mientras lo mantienes)
     // Si NO quieres que se dispare durante la macro MUTE, deja el && !macroActive
@@ -282,3 +282,4 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
+
