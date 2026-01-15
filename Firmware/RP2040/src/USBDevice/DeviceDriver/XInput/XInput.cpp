@@ -193,8 +193,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             static const int64_t STRONG_US    = 1500000; // 1.5 s
 
             // ⚠️ MÁS FUERTE QUE ANTES
-            static const int16_t RECOIL_STRONG = 12000;
-            static const int16_t RECOIL_WEAK   = 11000;
+            static const int16_t RECOIL_STRONG = 12500;
+            static const int16_t RECOIL_WEAK   = 12000;
 
             int16_t abs_ry = (base_ry >= 0) ? base_ry : (int16_t)-base_ry;
 
