@@ -20,11 +20,16 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static absolute_time_t shot_start_time;
     static bool            is_shooting = false;
 
-    // Macro L1/L3 (turbo X/A + 1s de cola)
-    static bool            jump_macro_active = false;
-    static uint64_t        jump_stop_time_ms = 0;
-    static uint64_t        jump_last_tap_ms  = 0;
-    static bool            jump_tap_state    = false;
+    // Macro L1 (turbo X/A + 1s de cola)
+    static bool            jump_l1_macro_active = false;
+    static uint64_t        jump_l1_stop_time_ms = 0;
+    static uint64_t        jump_l1_last_tap_ms  = 0;
+    static bool            jump_l1_tap_state    = false;
+
+    // Macro L3 (turbo X/A sin cola, sólo mientras está apretado)
+    static bool            jump_l3_macro_active = false;
+    static uint64_t        jump_l3_last_tap_ms  = 0;
+    static bool            jump_l3_tap_state    = false;
 
     // Macro R2 (turbo X/A instante, bloqueable por L2)
     static bool     r2_macro_active  = false;
@@ -139,7 +144,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             (int32_t)base_ly * base_ly;
 
         // -------- AUTOSPRINT: L3 cuando mueves el stick izquierdo --------
-        static const int16_t SPRINT_THRESH  = 20000; // ~60 % del recorrido
+        // Ahora con umbral ~5 % de recorrido
+        static const int16_t SPRINT_THRESH  = 1600; // ~5 % del recorrido
         static const int32_t SPRINT_THRESH2 =
             (int32_t)SPRINT_THRESH * (int32_t)SPRINT_THRESH;
 
@@ -149,7 +155,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
         //    - Movimiento POLAR (círculos/óvalos)
         //    - Fases de 120–320 ms con amplitud y velocidad aleatoria
-        //    - Solo si el stick está dentro del 80 % del recorrido.
+        //    - Solo si el stick está dentro del 80% del recorrido.
         // =========================================================
         {
             static const int16_t AIM_CENTER_MAX  = 26000;  // ~80 %
@@ -179,7 +185,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                     aim_amp = (int16_t)(6000 + (rand() % 4001));
 
                     // Velocidad angular aleatoria (rad/ms)
-                    // Base ~0.0035 rad/ms (≈ 200°/s) con variación pequeña
                     float base_speed = 0.0035f +
                         ((float)(rand() % 300) / 100000.0f); // [0.0035, ~0.0065]
                     if (rand() & 1) base_speed = -base_speed; // CW / CCW
@@ -400,7 +405,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
         }
 
-        // Sticks pulsados
+        // Sticks pulsados (L3 incluye auto-sprint)
         if (l3_pressed || auto_l3_sprint)    in_report_.buttons[0] |= XInput::Buttons0::L3;
         if (r3_pressed)                      in_report_.buttons[0] |= XInput::Buttons0::R3;
 
@@ -444,32 +449,65 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 8. MACRO L1 / L3 (FÍSICO) → TURBO X/A (con 1 s de cola)
-        //     OJO: solo l3_pressed físico, NO auto_l3_sprint
+        // 8. MACRO L1 y L3
+        //    - L1: turbo A con 1 s de cola
+        //    - L3: turbo A solo mientras está apretado (sin cola)
         // =========================================================
-        if (lb_pressed || l3_pressed)
+
+        // ----- L1: con cola de 1s -----
+        if (lb_pressed)
         {
-            jump_macro_active = true;
-            jump_stop_time_ms = now_ms + 1000; // dura 1s después de soltar
+            jump_l1_macro_active = true;
+            jump_l1_stop_time_ms = now_ms + 1000; // dura 1s después de soltar
         }
 
-        if (jump_macro_active)
+        if (jump_l1_macro_active)
         {
-            if (now_ms - jump_last_tap_ms > 50)
+            if (now_ms - jump_l1_last_tap_ms > 50)
             {
-                jump_last_tap_ms = now_ms;
-                jump_tap_state   = !jump_tap_state;
+                jump_l1_last_tap_ms = now_ms;
+                jump_l1_tap_state   = !jump_l1_tap_state;
             }
 
-            if (jump_tap_state)
+            if (jump_l1_tap_state)
             {
                 in_report_.buttons[1] |= XInput::Buttons1::A;
             }
 
-            if (!lb_pressed && !l3_pressed && now_ms >= jump_stop_time_ms)
+            if (!lb_pressed && now_ms >= jump_l1_stop_time_ms)
             {
-                jump_macro_active = false;
-                jump_tap_state    = false;
+                jump_l1_macro_active = false;
+                jump_l1_tap_state    = false;
+            }
+        }
+
+        // ----- L3: sin cola, se apaga al soltar -----
+        if (l3_pressed)
+        {
+            if (!jump_l3_macro_active)
+            {
+                jump_l3_macro_active = true;
+                jump_l3_last_tap_ms  = now_ms;
+                jump_l3_tap_state    = true;
+            }
+        }
+        else
+        {
+            jump_l3_macro_active = false;
+            jump_l3_tap_state    = false;
+        }
+
+        if (jump_l3_macro_active)
+        {
+            if (now_ms - jump_l3_last_tap_ms > 50)
+            {
+                jump_l3_last_tap_ms = now_ms;
+                jump_l3_tap_state   = !jump_l3_tap_state;
+            }
+
+            if (jump_l3_tap_state)
+            {
+                in_report_.buttons[1] |= XInput::Buttons1::A;
             }
         }
 
