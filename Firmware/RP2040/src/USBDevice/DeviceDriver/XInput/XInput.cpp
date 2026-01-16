@@ -20,7 +20,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static absolute_time_t shot_start_time;
     static bool            is_shooting = false;
 
-    // Macro L1 (turbo X/A + 1s de cola)
+    // Macro L1/L3 (turbo X/A + 1s de cola)
     static bool            jump_macro_active = false;
     static uint64_t        jump_stop_time_ms = 0;
     static uint64_t        jump_last_tap_ms  = 0;
@@ -103,8 +103,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         int16_t base_ly = Range::invert(gp_in.joystick_ly);
 
         // Stick derecho: deadzone grande para drift, SIN suavizado
-        int16_t raw_rx = gp_in.joystick_rx;
-        int16_t raw_ry = Range::invert(gp_in.joystick_ry);
+        int16_t base_rx = gp_in.joystick_rx;
+        int16_t base_ry = Range::invert(gp_in.joystick_ry);
 
         // Deadzone radial ~15 % para el stick derecho (por drift)
         static const int16_t R_DEADZONE  = 5000; // ~15 % de 32767
@@ -112,19 +112,15 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             (int32_t)R_DEADZONE * (int32_t)R_DEADZONE;
 
         int32_t magR2_raw =
-            (int32_t)raw_rx * raw_rx +
-            (int32_t)raw_ry * raw_ry;
+            (int32_t)base_rx * base_rx +
+            (int32_t)base_ry * base_ry;
 
         if (magR2_raw < R_DEADZONE2)
         {
             // Movimiento muy pequeño → lo tratamos como 0 (limpia drift suave)
-            raw_rx = 0;
-            raw_ry = 0;
+            base_rx = 0;
+            base_ry = 0;
         }
-
-        // Sin filtro de suavizado pesado: respondemos 1:1
-        int16_t base_rx = raw_rx;
-        int16_t base_ry = raw_ry;
 
         int16_t out_lx = base_lx;
         int16_t out_ly = base_ly;
@@ -137,10 +133,17 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitud del stick izquierdo (para límites de aim assist)
+        // Magnitud del stick izquierdo (para límites de aim assist y sprint)
         int32_t magL2 =
             (int32_t)base_lx * base_lx +
             (int32_t)base_ly * base_ly;
+
+        // -------- AUTOSPRINT: L3 cuando mueves el stick izquierdo --------
+        static const int16_t SPRINT_THRESH  = 20000; // ~60 % del recorrido
+        static const int32_t SPRINT_THRESH2 =
+            (int32_t)SPRINT_THRESH * (int32_t)SPRINT_THRESH;
+
+        bool auto_l3_sprint = (magL2 > SPRINT_THRESH2);
 
         // =========================================================
         // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
@@ -344,6 +347,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         const bool tri_pressed  = (btn & Gamepad::BUTTON_Y)    != 0;
         const bool sys_pressed  = (btn & Gamepad::BUTTON_SYS)  != 0;
         const bool back_pressed = (btn & Gamepad::BUTTON_BACK) != 0;
+        const bool l3_pressed   = (btn & Gamepad::BUTTON_L3)   != 0;
+        const bool r3_pressed   = (btn & Gamepad::BUTTON_R3)   != 0;
 
         // R1 normal
         if (rb_pressed)                      in_report_.buttons[1] |= XInput::Buttons1::RB;
@@ -396,8 +401,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // Sticks pulsados
-        if (btn & Gamepad::BUTTON_L3)        in_report_.buttons[0] |= XInput::Buttons0::L3;
-        if (btn & Gamepad::BUTTON_R3)        in_report_.buttons[0] |= XInput::Buttons0::R3;
+        if (l3_pressed || auto_l3_sprint)    in_report_.buttons[0] |= XInput::Buttons0::L3;
+        if (r3_pressed)                      in_report_.buttons[0] |= XInput::Buttons0::R3;
 
         // START
         if (btn & Gamepad::BUTTON_START)     in_report_.buttons[0] |= XInput::Buttons0::START;
@@ -439,9 +444,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 8. MACRO L1 → TURBO X/A (con 1 s de cola)
+        // 8. MACRO L1 / L3 (FÍSICO) → TURBO X/A (con 1 s de cola)
+        //     OJO: solo l3_pressed físico, NO auto_l3_sprint
         // =========================================================
-        if (lb_pressed)
+        if (lb_pressed || l3_pressed)
         {
             jump_macro_active = true;
             jump_stop_time_ms = now_ms + 1000; // dura 1s después de soltar
@@ -460,7 +466,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 in_report_.buttons[1] |= XInput::Buttons1::A;
             }
 
-            if (!lb_pressed && now_ms >= jump_stop_time_ms)
+            if (!lb_pressed && !l3_pressed && now_ms >= jump_stop_time_ms)
             {
                 jump_macro_active = false;
                 jump_tap_state    = false;
