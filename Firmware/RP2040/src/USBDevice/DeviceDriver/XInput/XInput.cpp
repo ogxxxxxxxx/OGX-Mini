@@ -110,8 +110,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         int16_t raw_rx = gp_in.joystick_rx;
         int16_t raw_ry = Range::invert(gp_in.joystick_ry);
 
-        // Deadzone radial ~10 % para el stick derecho
-        static const int16_t R_DEADZONE  = 3200; // ~10 % de 32767
+        // Deadzone radial ~15 % para el stick derecho (más grande por drift)
+        static const int16_t R_DEADZONE  = 5000; // ~15 % de 32767
         static const int32_t R_DEADZONE2 =
             (int32_t)R_DEADZONE * (int32_t)R_DEADZONE;
 
@@ -126,9 +126,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             raw_ry = 0;
         }
 
-        // Suavizado: 75% valor anterior + 25% valor nuevo
-        smooth_rx = (int16_t)(((int32_t)smooth_rx * 3 + raw_rx) / 4);
-        smooth_ry = (int16_t)(((int32_t)smooth_ry * 3 + raw_ry) / 4);
+        // Suavizado más fuerte: ~87.5% valor anterior + 12.5% valor nuevo
+        smooth_rx = (int16_t)(((int32_t)smooth_rx * 7 + raw_rx) / 8);
+        smooth_ry = (int16_t)(((int32_t)smooth_ry * 7 + raw_ry) / 8);
 
         int16_t base_rx = smooth_rx;
         int16_t base_ry = smooth_ry;
@@ -197,8 +197,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             static const int16_t RECOIL_MAX    = 31128;  // ~95 %
             static const int64_t STRONG_US    = 1500000; // 1.5 s
 
-            static const int16_t RECOIL_STRONG = 12250;
-            static const int16_t RECOIL_WEAK   = 11750;
+            static const int16_t RECOIL_STRONG = 11550;
+            static const int16_t RECOIL_WEAK   = 11050;
 
             int16_t abs_ry = (base_ry >= 0) ? base_ry : (int16_t)-base_ry;
 
@@ -257,8 +257,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 {
                     aim_r_last_time_ms = now_ms;
 
-                    const int16_t RJX = 1200; // jitter muy pequeño en X
-                    const int16_t RJY = 600;  // aún más pequeño en Y
+                    const int16_t RJX = 900;  // jitter X más suave
+                    const int16_t RJY = 450;  // jitter Y más suave
 
                     aim_r_jitter_x = (int16_t)((rand() % (2 * RJX + 1)) - RJX);
                     aim_r_jitter_y = (int16_t)((rand() % (2 * RJY + 1)) - RJY);
