@@ -43,11 +43,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static uint64_t aim_last_time_ms = 0;
     static int16_t  aim_jitter_x     = 0;
     static int16_t  aim_jitter_y     = 0;
-
-    // Micro-jitter del stick derecho (temblorcitos con R2)
-    static uint64_t aim_r_last_time_ms = 0;
-    static int16_t  aim_r_jitter_x     = 0;
-    static int16_t  aim_r_jitter_y     = 0;
+    static uint64_t aim_phase_end_ms = 0;  // fin del burst actual (aleatorio)
 
     // Suavizado del stick derecho (para drift)
     static int16_t  smooth_rx = 0;
@@ -151,8 +147,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         // =========================================================
         // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
-        //    Rotacional fuerte pero controlado.
-        //    Solo si el stick está dentro del 80% del recorrido.
+        //    - Solo si el stick está dentro del 80 % del recorrido.
+        //    - Funciona por "fases" aleatorias:
+        //        * Cada fase dura 120–320 ms (random)
+        //        * Cada fase tiene un vector jitter distinto (random)
+        //        * Dentro de la fase se hacen micro-ajustes cada ~25 ms
         // =========================================================
         {
             static const int16_t AIM_CENTER_MAX  = 26000;  // ~80 %
@@ -161,14 +160,49 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
             if (final_trig_r && magL2 <= AIM_CENTER_MAX2)
             {
-                // Cambiamos vector de jitter cada ~25 ms
+                // ¿Hay que empezar un nuevo "burst" de aim assist?
+                if (now_ms >= aim_phase_end_ms)
+                {
+                    // Fase de 120–320 ms
+                    uint32_t phase_len = 120u + (uint32_t)(rand() % 201); // [120, 320]
+                    aim_phase_end_ms   = now_ms + phase_len;
+
+                    // Amplitud base random para el jitter
+                    const int16_t AMP_MIN = 7000;
+                    const int16_t AMP_MAX = 11000;
+
+                    int16_t jx = (int16_t)(AMP_MIN + (rand() % (AMP_MAX - AMP_MIN + 1)));
+                    int16_t jy = (int16_t)(AMP_MIN + (rand() % (AMP_MAX - AMP_MIN + 1)));
+
+                    if (rand() & 1) jx = (int16_t)-jx;
+                    if (rand() & 1) jy = (int16_t)-jy;
+
+                    aim_jitter_x     = jx;
+                    aim_jitter_y     = jy;
+                    aim_last_time_ms = now_ms;
+                }
+
+                // Dentro del burst: micro-variaciones cada ~25 ms
                 if (now_ms - aim_last_time_ms > 25)
                 {
                     aim_last_time_ms = now_ms;
 
-                    const int16_t JITTER = 10000; // fuerza del aim assist
-                    aim_jitter_x = (int16_t)((rand() % (2 * JITTER + 1)) - JITTER);
-                    aim_jitter_y = (int16_t)((rand() % (2 * JITTER + 1)) - JITTER);
+                    const int16_t DELTA = 800; // ruido pequeño alrededor del vector base
+                    int16_t dx = (int16_t)((rand() % (2 * DELTA + 1)) - DELTA);
+                    int16_t dy = (int16_t)((rand() % (2 * DELTA + 1)) - DELTA);
+
+                    int32_t nx = (int32_t)aim_jitter_x + dx;
+                    int32_t ny = (int32_t)aim_jitter_y + dy;
+
+                    // Limitamos jitter máximo para que no sea totalmente loco
+                    const int16_t JMAX = 12000;
+                    if (nx < -JMAX) nx = -JMAX;
+                    if (nx >  JMAX) nx =  JMAX;
+                    if (ny < -JMAX) ny = -JMAX;
+                    if (ny >  JMAX) ny =  JMAX;
+
+                    aim_jitter_x = (int16_t)nx;
+                    aim_jitter_y = (int16_t)ny;
                 }
 
                 out_lx = clamp16((int16_t)(out_lx + aim_jitter_x));
@@ -176,11 +210,12 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
             else
             {
-                // Sin R2 o fuera del centro → sin jitter
-                aim_jitter_x = 0;
-                aim_jitter_y = 0;
-                out_lx       = base_lx;
-                out_ly       = base_ly;
+                // Sin R2 o fuera del centro → reseteamos el patrón
+                aim_jitter_x     = 0;
+                aim_jitter_y     = 0;
+                aim_phase_end_ms = 0;
+                out_lx           = base_lx;
+                out_ly           = base_ly;
             }
         }
 
@@ -239,47 +274,6 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             {
                 is_shooting = false;
                 out_ry      = base_ry;
-            }
-        }
-
-        // =========================================================
-        // 4.5 MICRO-JITTER STICK DERECHO (REMEZONES SUAVES CON R2)
-        // =========================================================
-        {
-            static const int16_t R_CENTER_MAX   = 30000;   // límite para no estar full
-            static const int32_t R_CENTER_MAX2 =
-                (int32_t)R_CENTER_MAX * R_CENTER_MAX;
-
-            if (final_trig_r)
-            {
-                // Actualizamos el "temblor" cada ~30 ms
-                if (now_ms - aim_r_last_time_ms > 30)
-                {
-                    aim_r_last_time_ms = now_ms;
-
-                    const int16_t RJX = 900;  // jitter X más suave
-                    const int16_t RJY = 450;  // jitter Y más suave
-
-                    aim_r_jitter_x = (int16_t)((rand() % (2 * RJX + 1)) - RJX);
-                    aim_r_jitter_y = (int16_t)((rand() % (2 * RJY + 1)) - RJY);
-                }
-
-                // Solo aplicamos si no estás prácticamente a tope
-                int32_t magR2_out =
-                    (int32_t)out_rx * out_rx +
-                    (int32_t)out_ry * out_ry;
-
-                if (magR2_out < R_CENTER_MAX2)
-                {
-                    out_rx = clamp16((int16_t)(out_rx + aim_r_jitter_x));
-                    out_ry = clamp16((int16_t)(out_ry + aim_r_jitter_y));
-                }
-            }
-            else
-            {
-                // Sin R2 → sin temblor
-                aim_r_jitter_x = 0;
-                aim_r_jitter_y = 0;
             }
         }
 
