@@ -133,25 +133,17 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitud del stick izquierdo (para límites de aim assist y sprint)
+        // Magnitud del stick izquierdo (para límites de aim assist)
         int32_t magL2 =
             (int32_t)base_lx * base_lx +
             (int32_t)base_ly * base_ly;
-
-        // -------- AUTOSPRINT: L3 cuando mueves el stick izquierdo --------
-        // Umbral ~5 % de recorrido
-        static const int16_t SPRINT_THRESH  = 1600; // ~5 % del recorrido
-        static const int32_t SPRINT_THRESH2 =
-            (int32_t)SPRINT_THRESH * (int32_t)SPRINT_THRESH;
-
-        bool auto_l3_sprint = (magL2 > SPRINT_THRESH2);
 
         // =========================================================
         // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
         //    - Movimiento POLAR (círculos/óvalos)
         //    - Fases de 120–320 ms con amplitud y velocidad aleatoria
         //    - Solo si el stick está dentro del 80% del recorrido.
-        //    - AHORA MÁS FUERTE (más amplitud y algo más rápido).
+        //    - MÁS FUERTE (más amplitud y algo más rápido).
         // =========================================================
         {
             static const int16_t AIM_CENTER_MAX  = 26000;  // ~80 %
@@ -402,8 +394,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             }
         }
 
-        // Sticks pulsados (L3 incluye auto-sprint, SIN MACRO)
-        if (l3_pressed || auto_l3_sprint)    in_report_.buttons[0] |= XInput::Buttons0::L3;
+        // Sticks pulsados (L3 ahora solo manual, SIN autosprint ni macro)
+        if (l3_pressed)                      in_report_.buttons[0] |= XInput::Buttons0::L3;
         if (r3_pressed)                      in_report_.buttons[0] |= XInput::Buttons0::R3;
 
         // START
@@ -446,7 +438,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 8. MACRO L1 (solo L1, L3 ya sin macro)
+        // 8. MACRO L1 (solo L1)
         //    - L1: turbo A con 1 s de cola
         // =========================================================
         if (lb_pressed)
