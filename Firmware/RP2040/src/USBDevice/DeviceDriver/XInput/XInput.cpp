@@ -5,18 +5,6 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 
-// =========================================================
-//  IA EXTERNA → CORRECCIÓN DE STICK DERECHO
-//  Estas variables las debe actualizar OTRO MÓDULO (por ej.,
-//  un parser de USB CDC que recibe datos desde el PC con IA).
-//  Ejemplo en otro .cpp:
-//      extern volatile int16_t g_ai_dx, g_ai_dy;
-//      extern volatile bool   g_ai_has_target;
-// =========================================================
-volatile int16_t g_ai_dx        = 0;   // desplazamiento sugerido por IA (X)
-volatile int16_t g_ai_dy        = 0;   // desplazamiento sugerido por IA (Y)
-volatile bool    g_ai_has_target = false; // true si la IA ve objetivo
-
 void XInputDevice::initialize()
 {
     class_driver_ = *tud_xinput::class_driver();
@@ -51,12 +39,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static uint64_t tri_last_tap_ms     = 0;
     static bool     tri_tap_state       = false;
 
-    // Aim assist (stick izquierdo)
-    static uint64_t aim_last_time_ms = 0;
-    static int16_t  aim_jitter_x     = 0;
-    static int16_t  aim_jitter_y     = 0;
-
-    // Suavizado del stick derecho (para drift)
+    // Suavizado / anti-drift de sticks
+    static int16_t  smooth_lx = 0;
+    static int16_t  smooth_ly = 0;
     static int16_t  smooth_rx = 0;
     static int16_t  smooth_ry = 0;
 
@@ -107,17 +92,38 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         r2_prev_pressed = trig_r_pressed;
 
         // =========================================================
-        // 2. STICKS BASE (coordenadas finales que ve el juego)
+        // 2. STICKS BASE (ANTI-DRIFT EN LOS DOS)
         // =========================================================
-        // Stick izquierdo sin cambios
-        int16_t base_lx = gp_in.joystick_lx;
-        int16_t base_ly = Range::invert(gp_in.joystick_ly);
+        // Stick izquierdo: anti-drift suave
+        int16_t raw_lx = gp_in.joystick_lx;
+        int16_t raw_ly = Range::invert(gp_in.joystick_ly);
 
-        // Stick derecho: aplicamos deadzone + suavizado para reducir drift
+        static const int16_t L_DEADZONE  = 3000; // ~9 % de 32767
+        static const int32_t L_DEADZONE2 =
+            (int32_t)L_DEADZONE * (int32_t)L_DEADZONE;
+
+        int32_t magL2_raw =
+            (int32_t)raw_lx * raw_lx +
+            (int32_t)raw_ly * raw_ly;
+
+        if (magL2_raw < L_DEADZONE2)
+        {
+            // Movimento muy pequeño → 0 (quita drift suave)
+            raw_lx = 0;
+            raw_ly = 0;
+        }
+
+        // Suavizado ligero: 75% anterior + 25% nuevo
+        smooth_lx = (int16_t)(((int32_t)smooth_lx * 3 + raw_lx) / 4);
+        smooth_ly = (int16_t)(((int32_t)smooth_ly * 3 + raw_ly) / 4);
+
+        int16_t base_lx = smooth_lx;
+        int16_t base_ly = smooth_ly;
+
+        // Stick derecho: anti-drift más agresivo (para tu drift grande)
         int16_t raw_rx = gp_in.joystick_rx;
         int16_t raw_ry = Range::invert(gp_in.joystick_ry);
 
-        // Deadzone radial ~15 % para el stick derecho (más grande por drift)
         static const int16_t R_DEADZONE  = 5000; // ~15 % de 32767
         static const int32_t R_DEADZONE2 =
             (int32_t)R_DEADZONE * (int32_t)R_DEADZONE;
@@ -128,12 +134,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         if (magR2_raw < R_DEADZONE2)
         {
-            // Movimiento muy pequeño → lo tratamos como 0 (limpia drift suave)
             raw_rx = 0;
             raw_ry = 0;
         }
 
-        // Suavizado: ~87.5% valor anterior + 12.5% valor nuevo
+        // Suavizado fuerte: 87.5% anterior + 12.5% nuevo
         smooth_rx = (int16_t)(((int32_t)smooth_rx * 7 + raw_rx) / 8);
         smooth_ry = (int16_t)(((int32_t)smooth_ry * 7 + raw_ry) / 8);
 
@@ -151,53 +156,12 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             return v;
         };
 
-        // Magnitud del stick izquierdo (para límites de aim assist)
-        int32_t magL2 =
-            (int32_t)base_lx * base_lx +
-            (int32_t)base_ly * base_ly;
-
         // =========================================================
-        // 3. AIM ASSIST (STICK IZQUIERDO, SOLO CON R2)
-        //    Rotacional fuerte pero controlado.
-        //    Solo si el stick está dentro del 80% del recorrido.
-        // =========================================================
-        {
-            static const int16_t AIM_CENTER_MAX  = 26000;  // ~80 %
-            static const int32_t AIM_CENTER_MAX2 =
-                (int32_t)AIM_CENTER_MAX * AIM_CENTER_MAX;
-
-            if (final_trig_r && magL2 <= AIM_CENTER_MAX2)
-            {
-                // Cambiamos vector de jitter cada ~25 ms
-                if (now_ms - aim_last_time_ms > 25)
-                {
-                    aim_last_time_ms = now_ms;
-
-                    const int16_t JITTER = 10000; // fuerza del aim assist
-                    aim_jitter_x = (int16_t)((rand() % (2 * JITTER + 1)) - JITTER);
-                    aim_jitter_y = (int16_t)((rand() % (2 * JITTER + 1)) - JITTER);
-                }
-
-                out_lx = clamp16((int16_t)(out_lx + aim_jitter_x));
-                out_ly = clamp16((int16_t)(out_ly + aim_jitter_y));
-            }
-            else
-            {
-                // Sin R2 o fuera del centro → sin jitter
-                aim_jitter_x = 0;
-                aim_jitter_y = 0;
-                out_lx       = base_lx;
-                out_ly       = base_ly;
-            }
-        }
-
-        // =========================================================
-        // 4. ANTI-RECOIL (STICK DERECHO Y, SOLO R2 SIN MACRO)
+        // 3. ANTI-RECOIL (STICK DERECHO Y, SOLO R2 SIN MACRO)
         //
-        //   - Solo si |Y| < 90–95 % del recorrido → si lo llevas al fondo,
-        //     se respeta tu movimiento.
-        //   - Primer 1.5 s: fuerza fuerte
-        //   - Después: fuerza un poco menor, estable
+        //   - Solo si |Y| < ~95 % del recorrido.
+        //   - Primer 1.5 s: fuerza fuerte.
+        //   - Después: fuerza un poco menor, estable.
         //   - Siempre empuja hacia ABAJO.
         // =========================================================
         {
@@ -250,26 +214,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 4.5 AIM ASSIST GUIADO POR IA (STICK DERECHO, SOLO L2)
-        //
-        //   - La IA externa calcula g_ai_dx / g_ai_dy (por ejemplo
-        //     a partir de la diferencia entre crosshair y enemigo).
-        //   - Aquí solo sumamos una versión SUAVIZADA de esos valores
-        //     al stick derecho, y SOLO cuando L2 está apretado.
-        // =========================================================
-        if (final_trig_l == 255 && g_ai_has_target)
-        {
-            // Escalamos para que no sea exagerado: IA manda valores "grandes",
-            // aquí los reducimos (dividimos por 4).
-            int32_t dx = ((int32_t)g_ai_dx) / 4;
-            int32_t dy = ((int32_t)g_ai_dy) / 4;
-
-            out_rx = clamp16((int16_t)(out_rx + dx));
-            out_ry = clamp16((int16_t)(out_ry + dy));
-        }
-
-        // =========================================================
-        // 5. DPAD
+        // 4. DPAD
         // =========================================================
         switch (gp_in.dpad)
         {
@@ -302,7 +247,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 6. BOTONES BÁSICOS + REMAPS
+        // 5. BOTONES BÁSICOS + REMAPS
         // =========================================================
         const bool lb_pressed   = (btn & Gamepad::BUTTON_LB)   != 0;
         const bool rb_pressed   = (btn & Gamepad::BUTTON_RB)   != 0;
@@ -388,7 +333,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 7. MACRO R2 → TURBO X/A (solo cuando NO está bloqueado)
+        // 6. MACRO R2 → TURBO X/A (solo cuando NO está bloqueado)
         // =========================================================
         if (r2_macro_active && !r2_macro_blocked)
         {
@@ -404,7 +349,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 8. MACRO L1 → TURBO X/A (con 1 s de cola)
+        // 7. MACRO L1 → TURBO X/A (con 1 s de cola)
         // =========================================================
         if (lb_pressed)
         {
@@ -433,7 +378,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 9. ASIGNAR TRIGGERS Y STICKS FINALES
+        // 8. ASIGNAR TRIGGERS Y STICKS FINALES
         // =========================================================
         in_report_.trigger_l   = final_trig_l;
         in_report_.trigger_r   = final_trig_r;
@@ -444,7 +389,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.joystick_ry = out_ry;
 
         // =========================================================
-        // 10. ENVIAR REPORTE XINPUT
+        // 9. ENVIAR REPORTE XINPUT
         // =========================================================
         if (tud_suspended())
         {
@@ -456,7 +401,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 
     // =============================================================
-    // 11. RUMBLE (igual que el original)
+    // 10. RUMBLE (igual que el original)
     // =============================================================
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_),
                                    sizeof(XInput::OutReport)) &&
