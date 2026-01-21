@@ -118,7 +118,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     // ---- Nueva macro PS -> R1 + L2 + Triangle (400 ms) ----
     static bool     psPrev            = false;
     static uint32_t psMacroTicks      = 0;
-    static constexpr uint32_t PS_MACRO_DURATION_TICKS = 400; // 400 ms
+    static constexpr uint32_t PS_MACRO_DURATION_TICKS = 350; // 400 ms
 
     Gamepad::PadIn gp_in = gamepad.get_pad_in();
     const uint16_t btn   = gp_in.buttons;
@@ -353,3 +353,4 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
+
