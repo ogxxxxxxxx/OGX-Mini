@@ -146,7 +146,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         //    - MÁS FUERTE (más amplitud y algo más rápido).
         // =========================================================
         {
-            static const int16_t AIM_CENTER_MAX  = 26000;  // ~80 %
+            static const int16_t AIM_CENTER_MAX  = 30000;  // ~80 %
             static const int32_t AIM_CENTER_MAX2 =
                 (int32_t)AIM_CENTER_MAX * AIM_CENTER_MAX;
 
@@ -224,7 +224,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         {
             static const int16_t RECOIL_MAX    = 31128;   // ~95 %
             static const int64_t RAMP_US      = 100000;  // 0.1 s
-            static const int64_t STRONG_US    = 1500000; // 1.5 s (plato fuerte)
+            static const int64_t STRONG_US    = 1250000; // 1.5 s (plato fuerte)
             static const int64_t DECAY_US     = 1000000; // 1.0 s (fuerte → débil)
 
             static const int16_t RECOIL_STRONG = 11550;
