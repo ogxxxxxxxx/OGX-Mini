@@ -40,12 +40,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     static uint64_t tri_last_tap_ms     = 0;
     static bool     tri_tap_state       = false;
 
-    // Aim assist (stick izquierdo, movimiento más lineal y suave)
+    // Aim assist (ultra suave y solo horizontal)
     static uint64_t aim_last_time_ms = 0;
-    static uint64_t aim_phase_end_ms = 0;
-    static float    aim_angle        = 0.0f;
-    static float    aim_speed        = 0.0f;
-    static int16_t  aim_amp          = 0;
+    static int16_t  aim_direction    = 1;  // 1 (derecha), -1 (izquierda)
     static bool     aim_active       = false;
 
     if (gamepad.new_pad_in())
@@ -132,12 +129,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             (int32_t)base_ly * base_ly;
 
         // =========================================================
-        // 3. AIM ASSIST MODERADO Y MÁS LINEAL (STICK IZQUIERDO, SOLO CON R2)
+        // 3. AIM ASSIST ULTRA SUAVE, SOLO HORIZONTAL
         // =========================================================
         {
             static const int16_t AIM_CENTER_MAX  = 30000;  // ~80 %
             static const int32_t AIM_CENTER_MAX2 =
                 (int32_t)AIM_CENTER_MAX * AIM_CENTER_MAX;
+            static const int16_t AIM_ASSIST_PULSE = 500;   // MUY BAJO, AJUSTABLE
 
             if (final_trig_r && magL2 <= AIM_CENTER_MAX2)
             {
@@ -145,57 +143,24 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
                 {
                     aim_active       = true;
                     aim_last_time_ms = now_ms;
-                    aim_phase_end_ms = now_ms;
-                    aim_angle        = 0.0f;
-                    aim_speed        = 0.0f;
-                    aim_amp          = 0;
+                    aim_direction    = 1;
                 }
 
-                // Nuevo patrón cada fase 120–320 ms
-                if (now_ms >= aim_phase_end_ms)
+                // Cambia de dirección cada 90 ms (para microcorrección)
+                if (now_ms - aim_last_time_ms > 90)
                 {
-                    uint32_t phase_len = 120u + (uint32_t)(rand() % 201);
-                    aim_phase_end_ms   = now_ms + phase_len;
-
-                    // Amplitud más baja **(movimiento menos caótico)**
-                    aim_amp = (int16_t)(3500 + (rand() % 1001));  // Antes 9000~14000
-
-                    // Velocidad angular más lenta **(patrón menos brusco)**
-                    float base_speed = 0.0030f +
-                        ((float)(rand() % 150) / 100000.0f);     // Antes hasta 0.0085
-                    if (rand() & 1) base_speed = -base_speed;
-                    aim_speed = base_speed;
+                    aim_last_time_ms = now_ms;
+                    aim_direction = -aim_direction; // Invierte dirección
                 }
 
-                // Movimiento polar más suave, pero si quieres lineal, puedes usar solo dx o dy
-                uint64_t dt_ms = now_ms - aim_last_time_ms;
-                aim_last_time_ms = now_ms;
-
-                float dt = static_cast<float>(dt_ms);
-                aim_angle += aim_speed * dt;
-
-                // Puedes usar ambos para suave elíptico, o solo uno para más lineal (comentado abajo):
-                float s = std::sin(aim_angle);
-                float c = std::cos(aim_angle);
-
-                int16_t dx = static_cast<int16_t>(c * aim_amp);
-                int16_t dy = static_cast<int16_t>(s * (aim_amp / 2)); // Menos vertical, más horizontal
-
-                out_lx = clamp16(static_cast<int16_t>(out_lx + dx));
-                out_ly = clamp16(static_cast<int16_t>(out_ly + dy));
-
-                // Si quieres solo horizontal ("lineal de verdad"), descomenta lo de abajo:
-                // int16_t dx = static_cast<int16_t>(aim_amp * 0.8f); // Constante o pequeño cambio
-                // out_lx = clamp16(static_cast<int16_t>(out_lx + dx));
+                // Aplica micro pulse solo en X, no mueve en el eje Y
+                out_lx = clamp16(static_cast<int16_t>(out_lx + aim_direction * AIM_ASSIST_PULSE));
             }
             else
             {
                 aim_active       = false;
-                aim_amp          = 0;
-                aim_angle        = 0.0f;
-                aim_speed        = 0.0f;
-                aim_phase_end_ms = 0;
                 aim_last_time_ms = 0;
+                aim_direction    = 1;
                 out_lx           = base_lx;
                 out_ly           = base_ly;
             }
@@ -210,9 +175,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             static const int64_t STRONG_US    = 1250000;
             static const int64_t DECAY_US     = 1000000;
 
-            // ----------- MOD SUAVE -----------
-            static const int16_t RECOIL_STRONG = 9000;   // Antes 11550
-            static const int16_t RECOIL_WEAK   = 8500;   // Antes 11050
+            static const int16_t RECOIL_STRONG = 9000;   // Suave
+            static const int16_t RECOIL_WEAK   = 8500;
 
             int16_t abs_ry = (base_ry >= 0) ? base_ry : (int16_t)-base_ry;
 
