@@ -111,11 +111,11 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             uint64_t now_ms = to_ms_since_boot(get_absolute_time());
 
             // Cambiamos el vector de jitter solo cada 35 ms aprox.
-            if (now_ms - aim_last_time_ms > 35)
+            if (now_ms - aim_last_time_ms > 45)
             {
                 aim_last_time_ms = now_ms;
 
-                const int16_t JITTER = 6000; // fuerza del aim assist (valor base)
+                const int16_t JITTER = 5000; // fuerza del aim assist (valor base)
                 // Generamos jitter en rango [-JITTER, +JITTER]
                 aim_jitter_x = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
                 aim_jitter_y = static_cast<int16_t>((rand() % (2 * JITTER + 1)) - JITTER);
@@ -160,8 +160,8 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             );
 
             // Fuerzas fuertes para que se note bien
-            const int16_t RECOIL_STRONG = 12000; // primer segundo
-            const int16_t RECOIL_WEAK   =  6000; // después
+            const int16_t RECOIL_STRONG =10000; // primer segundo
+            const int16_t RECOIL_WEAK   =8000; // después
 
             int16_t recoil_force = (time_shooting_us < 1000000)
                                  ? RECOIL_STRONG
