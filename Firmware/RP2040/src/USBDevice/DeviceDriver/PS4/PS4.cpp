@@ -6,16 +6,6 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // Helper: curvas / mapeos de sensibilidad para sticks
-// - Left stick: usamos una curva personalizada tipo "Steam" definida por 3 puntos:
-//     (0 -> 0), (mid_in -> mid_out), (1 -> 1)
-//   Implementada como mapeo lineal por tramos (fácil de ajustar y predecible).
-//   Ejemplo tomado de tu comentario: rango 0..375, mid_in = 200 -> mid_out = 125.
-//   En fracciones: mid_in_frac = 200/375, mid_out_frac = 125/375.
-//
-// - Right stick: lineal pero con un factor de sensibilidad < 1 (menos sensible).
-//
-// Mapping general: int16_t in [-32768,32767] -> float v in [-1,1] -> deadzone -> curva -> uint8_t [0..255]
-// Centro exacto se sitúa en 128.
 
 static inline uint8_t map_signed_to_uint8(float signed_val)
 {
@@ -90,6 +80,31 @@ static inline uint8_t apply_stick_custom_curve(int16_t in,
     return map_signed_to_uint8(signed_out);
 }
 
+// Nueva: función Steam-style usando potencia (gamma).
+// Garantiza out_frac = 1 cuando adj == 1 si sensitivity == 1.
+static inline uint8_t apply_stick_steam_style(int16_t in, float deadzone_fraction,
+                                              float gamma, float sensitivity = 1.0f)
+{
+    constexpr float INT16_MAX_F = 32767.0f;
+    float v = static_cast<float>(in) / INT16_MAX_F; // [-1,1]
+    float abs_v = std::fabs(v);
+    if (abs_v <= deadzone_fraction) return 128;
+
+    // Remapear fuera de deadzone a [0..1]
+    float adj = (abs_v - deadzone_fraction) / (1.0f - deadzone_fraction);
+    adj = std::fmax(0.0f, std::fmin(1.0f, adj));
+
+    // Curva Steam-style: potencia gamma
+    float out_frac = std::pow(adj, gamma);
+
+    // Aplicar sensibilidad y clamp
+    out_frac *= sensitivity;
+    out_frac = std::fmax(0.0f, std::fmin(1.0f, out_frac));
+
+    float signed_out = (v < 0.0f) ? -out_frac : out_frac;
+    return map_signed_to_uint8(signed_out);
+}
+
 void PS4Device::initialize()
 {
     class_driver_ =
@@ -113,7 +128,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     static bool     mutePrev          = false;
     static uint32_t muteMacroTicks    = 0;
     // Suponiendo que process() se llama aprox. cada 1 ms.
-    static constexpr uint32_t MUTE_MACRO_DURATION_TICKS = 485;
+    static constexpr uint32_t MUTE_MACRO_DURATION_TICKS = 477;
 
     // ---- Nueva macro PS -> R1 + L2 + Triangle (400 ms) ----
     static bool     psPrev            = false;
@@ -163,24 +178,20 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.gamepad.touchpadData.p2.unpressed = 1;
 
     // ------------------ Sticks analógicos (0-255) con ajustes solicitados ---------------
-    // RIGHT: lineal pero menos sensible
-    // LEFT: curva personalizada estilo "Steam" con puntos:
-    //   - total range assumed 0..375
-    //   - mid input  = 200 -> mid output = 125  (tú lo usabas así y te iba bien)
-    //
-    // Convertimos esos valores a fracciones [0..1]:
-    constexpr float steam_total = 375.0f;
-    constexpr float left_mid_in = 200.0f / steam_total; // ≈ 0.5333
-    constexpr float left_mid_out = 125.0f / steam_total; // ≈ 0.3333
-    constexpr float left_deadzone = 0.03f;   // puedes ajustar
-    constexpr float right_deadzone = 0.02f;  // puedes ajustar
-    constexpr float right_sensitivity = 0.85f; // <1 → menos sensible
+    // Usamos Steam-style (gamma) en ambos para llegar al 100% en extremos.
+    // LEFT: "Ancho" -> gamma = 1.8
+    // RIGHT: "Relajado" -> gamma = 1.3
+    constexpr float left_deadzone   = 0.03f;  // 3%
+    constexpr float right_deadzone  = 0.02f;  // 2%
+    constexpr float left_gamma      = 1.8f;   // "Ancho"
+    constexpr float right_gamma     = 1.3f;   // "Relajado"
+    constexpr float both_sensitivity = 1.0f;  // 1.0 para que lleguen al 100%
 
-    report_in_.leftStickX  = apply_stick_custom_curve(gp_in.joystick_lx, left_mid_in, left_mid_out, left_deadzone);
-    report_in_.leftStickY  = apply_stick_custom_curve(gp_in.joystick_ly, left_mid_in, left_mid_out, left_deadzone);
+    report_in_.leftStickX  = apply_stick_steam_style(gp_in.joystick_lx, left_deadzone,  left_gamma,  both_sensitivity);
+    report_in_.leftStickY  = apply_stick_steam_style(gp_in.joystick_ly, left_deadzone,  left_gamma,  both_sensitivity);
 
-    report_in_.rightStickX = apply_stick_linear(gp_in.joystick_rx, right_sensitivity, right_deadzone);
-    report_in_.rightStickY = apply_stick_linear(gp_in.joystick_ry, right_sensitivity, right_deadzone);
+    report_in_.rightStickX = apply_stick_steam_style(gp_in.joystick_rx, right_deadzone, right_gamma, both_sensitivity);
+    report_in_.rightStickY = apply_stick_steam_style(gp_in.joystick_ry, right_deadzone, right_gamma, both_sensitivity);
 
     // ------------------ D-Pad → HAT ------------------
     switch (gp_in.dpad)
@@ -248,7 +259,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.rightTrigger = trigR;
 
     // ------------------ Sobrescribir por la macro PS (si está activa) --------------
-    // La macro fuerza R1 + L2 + Triangle durante PS_MACRO_DURATION_TICKS ms.
     if (psMacroActive)
     {
         report_in_.buttonR1 = 1; // R1
@@ -353,4 +363,3 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
-
