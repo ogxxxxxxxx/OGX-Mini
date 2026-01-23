@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "pico/time.h" // añadido para timeouts precisos (make_timeout_time_ms, time_reached)
+
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // Helper: curvas / mapeos de sensibilidad para sticks
@@ -174,14 +176,15 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 
     // ---- Estado de la macro MUTE (cuadrado + círculos) ----
     static bool     mutePrev          = false;
-    static uint32_t muteMacroTicks    = 0;
-    // Suponiendo que process() se llama aprox. cada 1 ms.
-    static constexpr uint32_t MUTE_MACRO_DURATION_TICKS = 470;
+    static absolute_time_t muteEndTime; // time-based end
+    static bool     muteActive        = false;
+    // Duración exacta solicitada para la macro (ms)
+    static constexpr uint32_t MUTE_MACRO_DURATION_MS = 470;
 
     // ---- Nueva macro PS -> R1 + L2 + Triangle (400 ms) ----
     static bool     psPrev            = false;
     static uint32_t psMacroTicks      = 0;
-    static constexpr uint32_t PS_MACRO_DURATION_TICKS = 350; // 400 ms
+    static constexpr uint32_t PS_MACRO_DURATION_TICKS = 350; // 350 ms
 
     Gamepad::PadIn gp_in = gamepad.get_pad_in();
     const uint16_t btn   = gp_in.buttons;
@@ -190,27 +193,32 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     const bool mutePressed  = (btn & Gamepad::BUTTON_MISC)  != 0;  // usamos MISC como MUTE
     const bool psPressed    = (btn & Gamepad::BUTTON_SYS)   != 0;  // PS button
 
-    // Flanco de subida de MUTE → arranca macro 3.5 s
+    // Flanco de subida de MUTE → arranca macro con tiempo absoluto (470 ms)
     if (mutePressed && !mutePrev)
     {
-        muteMacroTicks = MUTE_MACRO_DURATION_TICKS;
+        muteActive = true;
+        muteEndTime = make_timeout_time_ms(MUTE_MACRO_DURATION_MS);
     }
     mutePrev = mutePressed;
 
-    // Flanco de subida de PS → arranca macro PS (400 ms)
+    // Flanco de subida de PS → arranca macro PS (350 ms)
     if (psPressed && !psPrev)
     {
         psMacroTicks = PS_MACRO_DURATION_TICKS;
     }
     psPrev = psPressed;
 
-    const bool macroActive = (muteMacroTicks > 0);
-    if (muteMacroTicks > 0)
-        --muteMacroTicks;
+    // Actualizar estado temporal de las macros
+    if (muteActive && time_reached(muteEndTime))
+    {
+        muteActive = false;
+    }
 
-    const bool psMacroActive = (psMacroTicks > 0);
+    const bool macroActive = muteActive; // usamos el flag temporal basado en tiempo
+
     if (psMacroTicks > 0)
         --psMacroTicks;
+    const bool psMacroActive = (psMacroTicks > 0);
 
     // ----------------------------------------------------------------
     // Construimos SIEMPRE el reporte desde cero
@@ -414,4 +422,3 @@ const uint8_t* PS4Device::get_descriptor_device_qualifier_cb()
 {
     return nullptr;
 }
-
