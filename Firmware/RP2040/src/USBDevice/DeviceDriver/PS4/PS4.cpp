@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "pico/time.h" // añadido para timeouts precisos (make_timeout_time_ms, time_reached)
+#include "pico/time.h" // para make_timeout_time_ms, time_reached
 
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
@@ -179,12 +179,13 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     static absolute_time_t muteEndTime; // time-based end
     static bool     muteActive        = false;
     // Duración exacta solicitada para la macro (ms)
-    static constexpr uint32_t MUTE_MACRO_DURATION_MS = 470;
+    static constexpr uint32_t MUTE_MACRO_DURATION_MS = 483;
 
-    // ---- Nueva macro PS -> R1 + L2 + Triangle (400 ms) ----
+    // ---- Nueva macro PS -> R1 + L2 + Triangle (time-based) ----
     static bool     psPrev            = false;
-    static uint32_t psMacroTicks      = 0;
-    static constexpr uint32_t PS_MACRO_DURATION_TICKS = 350; // 350 ms
+    static absolute_time_t psEndTime; // time-based end for PS macro
+    static bool     psActive         = false;
+    static constexpr uint32_t PS_MACRO_DURATION_MS = 350; // 350 ms
 
     Gamepad::PadIn gp_in = gamepad.get_pad_in();
     const uint16_t btn   = gp_in.buttons;
@@ -193,7 +194,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     const bool mutePressed  = (btn & Gamepad::BUTTON_MISC)  != 0;  // usamos MISC como MUTE
     const bool psPressed    = (btn & Gamepad::BUTTON_SYS)   != 0;  // PS button
 
-    // Flanco de subida de MUTE → arranca macro con tiempo absoluto (470 ms)
+    // Flanco de subida de MUTE → arranca macro con tiempo absoluto (483 ms)
     if (mutePressed && !mutePrev)
     {
         muteActive = true;
@@ -201,24 +202,26 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     }
     mutePrev = mutePressed;
 
-    // Flanco de subida de PS → arranca macro PS (350 ms)
+    // Flanco de subida de PS → arranca macro PS (350 ms) -> time-based
     if (psPressed && !psPrev)
     {
-        psMacroTicks = PS_MACRO_DURATION_TICKS;
+        psActive = true;
+        psEndTime = make_timeout_time_ms(PS_MACRO_DURATION_MS);
     }
     psPrev = psPressed;
 
-    // Actualizar estado temporal de las macros
+    // Actualizar estados por tiempo
     if (muteActive && time_reached(muteEndTime))
     {
         muteActive = false;
     }
+    if (psActive && time_reached(psEndTime))
+    {
+        psActive = false;
+    }
 
-    const bool macroActive = muteActive; // usamos el flag temporal basado en tiempo
-
-    if (psMacroTicks > 0)
-        --psMacroTicks;
-    const bool psMacroActive = (psMacroTicks > 0);
+    const bool macroActive = muteActive; // MUTE macro
+    const bool psMacroActive = psActive; // PS macro (time-based)
 
     // ----------------------------------------------------------------
     // Construimos SIEMPRE el reporte desde cero
