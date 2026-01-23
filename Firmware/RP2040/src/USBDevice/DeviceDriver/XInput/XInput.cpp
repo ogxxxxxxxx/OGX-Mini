@@ -2,6 +2,7 @@
 #include <cstdlib>        // rand()
 #include <cmath>
 #include <cstdint>
+#include <climits>
 #include "pico/time.h"    // absolute_time, time_diff, etc.
 
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
@@ -489,7 +490,7 @@ bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
 {
     (void)rhport;
     (void)stage;
-    (void)request);
+    (void)request;
     return false;
 }
 
