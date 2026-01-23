@@ -1,10 +1,77 @@
 #include <cstring>
 #include <cstdlib>        // rand()
+#include <cmath>
+#include <cstdint>
 #include "pico/time.h"    // absolute_time, time_diff, etc.
 
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 
+// -----------------------------------------------------------------------------
+// Helpers: Steam-style radial mapping for sticks (garantiza 100% en los extremos)
+// -----------------------------------------------------------------------------
+static inline int16_t clamp_int16_from_int32(int32_t v)
+{
+    if (v < static_cast<int32_t>(INT16_MIN)) return INT16_MIN;
+    if (v > static_cast<int32_t>(INT16_MAX)) return INT16_MAX;
+    return static_cast<int16_t>(v);
+}
+
+// Aplica deadzone radial + curva tipo "Steam" (potencia gamma) sobre la magnitud,
+// preservando dirección. Entrada y salida en rango int16 (-32768..32767).
+static inline void apply_stick_steam_radial_int16(int16_t in_x, int16_t in_y,
+                                                  float deadzone_fraction, float gamma, float sensitivity,
+                                                  int16_t &out_x, int16_t &out_y)
+{
+    constexpr float INT16_MAX_F = 32767.0f;
+
+    // Normalizar a [-1..1]
+    float vx = static_cast<float>(in_x) / INT16_MAX_F;
+    float vy = static_cast<float>(in_y) / INT16_MAX_F;
+
+    float mag = std::sqrt(vx*vx + vy*vy);
+
+    // Dentro de deadzone → centro (0)
+    if (mag <= deadzone_fraction || mag == 0.0f)
+    {
+        out_x = 0;
+        out_y = 0;
+        return;
+    }
+
+    if (mag > 1.0f) mag = 1.0f; // por si -32768 produce >1
+
+    // Remap magnitud fuera de deadzone a [0..1]
+    float adj = (mag - deadzone_fraction) / (1.0f - deadzone_fraction);
+    adj = std::fmax(0.0f, std::fmin(1.0f, adj));
+
+    // Curva tipo "Steam"
+    float out_frac = std::pow(adj, gamma);
+
+    // Aplicar sensibilidad y clamp (sensitivity=1 → llega a 1 en adj==1)
+    out_frac *= sensitivity;
+    out_frac = std::fmax(0.0f, std::fmin(1.0f, out_frac));
+
+    // Reconstruir componentes manteniendo dirección
+    float scale = out_frac / mag; // mag>0
+    float sx = vx * scale;
+    float sy = vy * scale;
+
+    // Clamp a [-1..1] por si acaso
+    sx = std::fmax(-1.0f, std::fmin(1.0f, sx));
+    sy = std::fmax(-1.0f, std::fmin(1.0f, sy));
+
+    // Convertir a int16 utilizando INT16_MAX como escala positiva
+    int32_t ix = static_cast<int32_t>(std::lround(sx * INT16_MAX_F));
+    int32_t iy = static_cast<int32_t>(std::lround(sy * INT16_MAX_F));
+
+    out_x = clamp_int16_from_int32(ix);
+    out_y = clamp_int16_from_int32(iy);
+}
+
+// -----------------------------------------------------------------------------
+// XInputDevice
+// -----------------------------------------------------------------------------
 void XInputDevice::initialize()
 {
     class_driver_ = *tud_xinput::class_driver();
@@ -310,10 +377,41 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 9. ASIGNAR TRIGGERS Y STICKS FINALES
-        //    Antes de escribir los ejes finales, limitamos todos
-        //    los ejes para que no superen el 95% del rango absoluto.
-        //    Usamos int32_t intermedio para evitar cualquier overflow.
+        // 9. ANÁLOGOS: aplicar mapeo RADIAL Steam-style antes de remitirse
+        //    LEFT: "Ancho"  -> gamma = 1.8 (más resolución cerca del centro)
+        //    RIGHT: "Relajado" -> gamma = 1.3 (ligeramente menos sensible que lineal)
+        //    Ambos usan sensitivity = 1.0 para alcanzar 100% en extremos.
+        // =========================================================
+        constexpr float left_deadzone   = 0.03f;  // 3% radial
+        constexpr float right_deadzone  = 0.02f;  // 2% radial
+        constexpr float left_gamma      = 1.8f;   // ancho
+        constexpr float right_gamma     = 1.3f;   // relajado
+        constexpr float both_sensitivity = 1.0f;  // llegan al 100% si el stick lo alcanza
+
+        int16_t mapped_lx = 0;
+        int16_t mapped_ly = 0;
+        int16_t mapped_rx = 0;
+        int16_t mapped_ry = 0;
+
+        apply_stick_steam_radial_int16(out_lx, out_ly,
+                                       left_deadzone, left_gamma, both_sensitivity,
+                                       mapped_lx, mapped_ly);
+
+        apply_stick_steam_radial_int16(out_rx, out_ry,
+                                       right_deadzone, right_gamma, both_sensitivity,
+                                       mapped_rx, mapped_ry);
+
+        // Reemplazamos out_* por los mapeados para seguir con la lógica existente
+        out_lx = mapped_lx;
+        out_ly = mapped_ly;
+        out_rx = mapped_rx;
+        out_ry = mapped_ry;
+
+        // =========================================================
+        // 10. ASIGNAR TRIGGERS Y STICKS FINALES
+        //     Antes de escribir los ejes finales, limitamos todos
+        //     los ejes para que no superen el 95% del rango absoluto.
+        //     Usamos int32_t intermedio para evitar cualquier overflow.
         // =========================================================
         in_report_.trigger_l   = final_trig_l;
         in_report_.trigger_r   = final_trig_r;
@@ -332,7 +430,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.joystick_ry = clamp95_to_int16(static_cast<int32_t>(out_ry));
 
         // =========================================================
-        // 10. ENVIAR REPORTE XINPUT
+        // 11. ENVIAR REPORTE XINPUT
         // =========================================================
         if (tud_suspended())
         {
@@ -344,7 +442,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 
     // =============================================================
-    // 11. RUMBLE (igual que el original)
+    // 12. RUMBLE (igual que el original)
     // =============================================================
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_),
                                    sizeof(XInput::OutReport)) &&
@@ -391,7 +489,7 @@ bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport,
 {
     (void)rhport;
     (void)stage;
-    (void)request;
+    (void)request);
     return false;
 }
 
