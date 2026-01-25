@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "pico/time.h" // para make_timeout_time_ms, time_reached
+#include "pico/time.h" // make_timeout_time_ms, time_reached
 
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
@@ -114,6 +114,7 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
                                             uint8_t &out_x, uint8_t &out_y)
 {
     constexpr float INT16_MAX_F = 32767.0f;
+    constexpr float SNAP_TO_EDGE_THRESHOLD = 0.995f; // umbral para forzar 100% en el borde
     float vx = static_cast<float>(in_x) / INT16_MAX_F; // [-1..1]
     float vy = static_cast<float>(in_y) / INT16_MAX_F; // [-1..1]
 
@@ -127,6 +128,18 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
 
     // Clamp mag por si valores raw > 1 debido a -32768 etc.
     if (mag > 1.0f) mag = 1.0f;
+
+    // Si estamos muy cerca del borde físico, forzamos magnitud 1.0 manteniendo dirección
+    if (mag >= SNAP_TO_EDGE_THRESHOLD)
+    {
+        // unit vector (dirección)
+        float ux = vx / mag;
+        float uy = vy / mag;
+        // mapeamos la dirección a 100% (manteniendo diagonalidad)
+        out_x = map_signed_to_uint8(ux);
+        out_y = map_signed_to_uint8(uy);
+        return;
+    }
 
     // Remapear magnitud fuera de deadzone a [0..1]
     float adj = (mag - deadzone_fraction) / (1.0f - deadzone_fraction);
