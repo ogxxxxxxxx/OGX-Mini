@@ -114,7 +114,8 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
                                             uint8_t &out_x, uint8_t &out_y)
 {
     constexpr float INT16_MAX_F = 32767.0f;
-    constexpr float SNAP_TO_EDGE_THRESHOLD = 0.995f; // umbral para forzar 100% en el borde
+    // Umbral más permisivo para asegurar 100% en la mayoría de sticks reales
+    constexpr float SNAP_TO_EDGE_THRESHOLD = 0.98f; // <--- adjusted to snap earlier
     float vx = static_cast<float>(in_x) / INT16_MAX_F; // [-1..1]
     float vy = static_cast<float>(in_y) / INT16_MAX_F; // [-1..1]
 
