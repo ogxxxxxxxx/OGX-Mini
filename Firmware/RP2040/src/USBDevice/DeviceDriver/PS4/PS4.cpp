@@ -19,6 +19,10 @@ static inline uint8_t map_signed_to_uint8(float signed_val)
     return static_cast<uint8_t>(out);
 }
 
+// Helpers para extremos exactos (normalizados usando la misma fórmula inversa)
+static inline uint8_t max_positive_byte() { return 255; } // +1.0
+static inline uint8_t max_negative_byte() { return 1;   } // -1.0 (128 + 127*(-1) = 1)
+
 static inline uint8_t apply_stick_linear(int16_t in, float sensitivity, float deadzone_fraction)
 {
     constexpr float INT16_MAX_F = 32767.0f;
@@ -107,14 +111,18 @@ static inline uint8_t apply_stick_steam_style(int16_t in, float deadzone_fractio
 }
 
 // Nueva: versión RADIAL (circular) — remapea magnitud y preserva dirección.
-// input: in_x, in_y (int16), deadzone_fraction sobre la MAGNITUD, gamma sobre la MAGNITUD.
-// output: out_x, out_y (uint8) - ya mapeados a 0..255 con centro 128.
+// Ahora: cuando snapea a tope, ESCRIBE los bytes extremos exactos (1 o 255)
+// para garantizar que la lectura normalizada sea exactamente ±1.0.
 static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
                                             float deadzone_fraction, float gamma, float sensitivity,
                                             uint8_t &out_x, uint8_t &out_y)
 {
     constexpr float INT16_MAX_F = 32767.0f;
-    constexpr float SNAP_TO_EDGE_THRESHOLD = 0.995f; // umbral para forzar 100% en el borde
+    // Umbral y parámetros para snap y axis-snap
+    constexpr float SNAP_TO_EDGE_THRESHOLD = 0.98f; // si mag >= esto, snap a 100%
+    constexpr float AXIS_SNAP_MIN_OTHER_AXIS = 0.05f; // si el otro eje está por debajo de esto
+    constexpr float AXIS_SNAP_MAIN_AXIS = 0.95f;      // y el eje principal >= esto -> snap
+
     float vx = static_cast<float>(in_x) / INT16_MAX_F; // [-1..1]
     float vy = static_cast<float>(in_y) / INT16_MAX_F; // [-1..1]
 
@@ -129,15 +137,39 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
     // Clamp mag por si valores raw > 1 debido a -32768 etc.
     if (mag > 1.0f) mag = 1.0f;
 
-    // Si estamos muy cerca del borde físico, forzamos magnitud 1.0 manteniendo dirección
+    // AXIS SNAP: si un eje casi 0 y el otro cerca del tope, forzamos ese eje a ±1 exacto.
+    if (std::fabs(vx) <= AXIS_SNAP_MIN_OTHER_AXIS && std::fabs(vy) >= AXIS_SNAP_MAIN_AXIS)
+    {
+        // forzamos Y al extremo con byte exacto; X a centro (128)
+        out_x = 128;
+        out_y = (vy < 0.0f) ? max_negative_byte() : max_positive_byte();
+        return;
+    }
+    if (std::fabs(vy) <= AXIS_SNAP_MIN_OTHER_AXIS && std::fabs(vx) >= AXIS_SNAP_MAIN_AXIS)
+    {
+        // forzamos X al extremo con byte exacto; Y a centro (128)
+        out_x = (vx < 0.0f) ? max_negative_byte() : max_positive_byte();
+        out_y = 128;
+        return;
+    }
+
+    // Magnitude snap: si estamos muy cerca del borde, forzamos vector unitario
     if (mag >= SNAP_TO_EDGE_THRESHOLD)
     {
-        // unit vector (dirección)
         float ux = vx / mag;
         float uy = vy / mag;
-        // mapeamos la dirección a 100% (manteniendo diagonalidad)
-        out_x = map_signed_to_uint8(ux);
-        out_y = map_signed_to_uint8(uy);
+        // Para mantener la dirección pero asegurar extremos exactos:
+        // Si ux/uy están lo bastante cerca de ±1.0 y la componente dominante lo justifica,
+        // escribimos el byte extremo exacto en esa componente. Si es diagonal, escribimos
+        // ambos componentes usando map_signed_to_uint8(ux) — pero para máxima seguridad,
+        // si ux ó uy ≈ ±1.0 lo convertimos al byte extremo exacto.
+        auto write_comp = [](float c)->uint8_t {
+            if (c >= 0.999f) return max_positive_byte();
+            if (c <= -0.999f) return max_negative_byte();
+            return map_signed_to_uint8(c);
+        };
+        out_x = write_comp(ux);
+        out_y = write_comp(uy);
         return;
     }
 
@@ -148,10 +180,9 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
     // Curve: potencia gamma sobre la magnitud
     float out_frac = std::pow(adj, gamma);
 
-    // Aplicar sensibilidad y clamp (sens=1 -> out_frac==1 si adj==1)
+    // Aplicar sensibilidad y clamp
     out_frac *= sensitivity;
-    if (out_frac > 1.0f) out_frac = 1.0f;
-    if (out_frac < 0.0f) out_frac = 0.0f;
+    out_frac = std::fmax(0.0f, std::fmin(1.0f, out_frac));
 
     // Reconstruir componentes manteniendo dirección:
     float scale = out_frac / mag; // mag>0
@@ -159,10 +190,8 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
     float sy = vy * scale;
 
     // Clamp just in case
-    if (sx >  1.0f) sx =  1.0f;
-    if (sx < -1.0f) sx = -1.0f;
-    if (sy >  1.0f) sy =  1.0f;
-    if (sy < -1.0f) sy = -1.0f;
+    sx = std::fmax(-1.0f, std::fmin(1.0f, sx));
+    sy = std::fmax(-1.0f, std::fmin(1.0f, sy));
 
     out_x = map_signed_to_uint8(sx);
     out_y = map_signed_to_uint8(sy);
@@ -191,7 +220,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     static bool     mutePrev          = false;
     static absolute_time_t muteEndTime; // time-based end
     static bool     muteActive        = false;
-    // Duración exacta solicitada para la macro (ms)
     static constexpr uint32_t MUTE_MACRO_DURATION_MS = 483;
 
     // ---- Nueva macro PS -> R1 + L2 + Triangle (time-based) ----
@@ -250,7 +278,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.gamepad.touchpadData.p2.unpressed = 1;
 
     // ------------------ Sticks analógicos (0-255) con ajustes solicitados ---------------
-    // Usamos mapeo RADIAL (deadzone + gamma sobre la magnitud) para preservar diagonal.
     // LEFT: "Ancho" -> gamma = 1.8
     // RIGHT: "Relajado" -> gamma = 1.3
     constexpr float left_deadzone   = 0.03f;  // 3% (radial)
@@ -259,7 +286,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     constexpr float right_gamma     = 1.3f;   // "Relajado"
     constexpr float both_sensitivity = 1.0f;  // 1.0 para que lleguen al 100% si mag==1
 
-    // Aplicar mapeo radial para preservar dirección y asegurar 100% en extremos
     apply_stick_steam_radial(gp_in.joystick_lx, gp_in.joystick_ly,
                              left_deadzone, left_gamma, both_sensitivity,
                              report_in_.leftStickX, report_in_.leftStickY);
@@ -289,7 +315,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     const bool squareFinal = baseSquare || macroActive;
     const bool circleFinal = baseCircle || macroActive;
 
-    // NO remapeos que muevan el stick izquierdo al pulsar Square (tal como pediste).
     report_in_.buttonWest  = squareFinal ? 1 : 0;               // Square
     report_in_.buttonEast  = circleFinal ? 1 : 0;               // Circle
     report_in_.buttonSouth = (btn & Gamepad::BUTTON_A) ? 1 : 0; // Cross (X)
