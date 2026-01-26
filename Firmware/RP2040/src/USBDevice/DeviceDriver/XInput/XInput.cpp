@@ -235,15 +235,15 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             );
 
             // Fuerzas fuertes para que se note bien
-            const int32_t RECOIL_STRONG = 8200; // primer segundo
-            const int32_t RECOIL_WEAK   = 8000; // después
+            const int32_t RECOIL_STRONG = 9000; // primer segundo
+            const int32_t RECOIL_WEAK   = 8600; // después
 
             int32_t recoil_force = (time_shooting_us < 1000000)
                                  ? RECOIL_STRONG
                                  : RECOIL_WEAK;
 
             // Escalamos el recoil al 95% máximo
-            constexpr int SCALE_PCT = 95;
+            constexpr int SCALE_PCT = 99;
             recoil_force = (recoil_force * SCALE_PCT) / 100;
 
             // Hacemos la resta en 32 bits para evitar wrap-around
@@ -418,7 +418,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.trigger_r   = final_trig_r;
 
         // Limitar ejes al 95% del máximo para evitar giros extremos
-        constexpr int32_t LIM95 = (static_cast<int32_t>(INT16_MAX) * 95) / 100; // ≈ 31128
+        constexpr int32_t LIM95 = (static_cast<int32_t>(INT16_MAX) * 97) / 100; // ≈ 31128
         auto clamp95_to_int16 = [LIM95](int32_t v) -> int16_t {
             if (v < -LIM95) return static_cast<int16_t>(-LIM95);
             if (v >  LIM95) return static_cast<int16_t>( LIM95);
