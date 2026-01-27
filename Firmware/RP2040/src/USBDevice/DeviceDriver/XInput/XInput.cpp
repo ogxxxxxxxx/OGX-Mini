@@ -292,15 +292,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 7. DROP SHOT (R2 sin L2) -> B
-        // =========================================================
-        if (final_trig_r && !final_trig_l)
-        {
-            in_report_.buttons[1] |= XInput::Buttons1::B;
-        }
-
-        // =========================================================
-        // 8. MACRO L1 (LB físico) -> SPAM JUMP (A)
+        // 7. MACRO L1 (LB físico) -> SPAM JUMP (A)
         // =========================================================
         if (btn & Gamepad::BUTTON_LB)
         {
@@ -331,13 +323,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // =========================================================
-        // 9. ANALOG STICKS: MENOS SENSIBLE SIEMPRE, LINEAL
+        // 8. ANÁLOGOS: NORMAL, 100% ORIGINAL, LINEAL SIEMPRE
         // =========================================================
-        constexpr float left_deadzone   = 0.005f;  // 0.5%
-        constexpr float right_deadzone  = 0.005f;  // 0.5%
+        constexpr float left_deadzone   = 0.005f;  // 0.5% (ajusta si tienes drift)
+        constexpr float right_deadzone  = 0.005f;  // 0.5% (ajusta si tienes drift)
         constexpr float left_gamma      = 1.0f;    // lineal, sin curva
         constexpr float right_gamma     = 1.0f;    // lineal, sin curva
-        constexpr float both_sensitivity = 0.8f;   // menos sensible SIEMPRE
+        constexpr float both_sensitivity = 1.0f;   // igual que original
 
         int16_t mapped_lx = 0;
         int16_t mapped_ly = 0;
@@ -358,7 +350,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         out_ry = mapped_ry;
 
         // =========================================================
-        // 10. ASIGNAR TRIGGERS Y STICKS FINALES
+        // 9. ASIGNAR TRIGGERS Y STICKS FINALES
         //     Antes de escribir los ejes finales, limitamos todos
         //     los ejes para que no superen el 97% del rango absoluto.
         // =========================================================
@@ -378,7 +370,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.joystick_ry = clamp97_to_int16(static_cast<int32_t>(out_ry));
 
         // =========================================================
-        // 11. ENVIAR REPORTE XINPUT
+        // 10. ENVIAR REPORTE XINPUT
         // =========================================================
         if (tud_suspended())
         {
@@ -390,7 +382,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 
     // =============================================================
-    // 12. RUMBLE (igual que el original)
+    // 11. RUMBLE (igual que el original)
     // =============================================================
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_),
                                    sizeof(XInput::OutReport)) &&
