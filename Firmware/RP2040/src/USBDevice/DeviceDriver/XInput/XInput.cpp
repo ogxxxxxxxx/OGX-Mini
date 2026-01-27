@@ -124,7 +124,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             uint16_t unknown = btn & ~knownMask;
             if (unknown)
             {
-                for (uint8_t i = 0; i < 16; ++i)
+                for (uint16_t i = 0; i < 16; ++i)
                 {
                     uint16_t bit = static_cast<uint16_t>(1u << i);
                     if (unknown & bit)
@@ -161,9 +161,9 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         };
 
         // =========================================================
-        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON R2)
+        // 3. STICKY AIM (JITTER EN STICK IZQUIERDO SOLO CON L2, PERO SE DESACTIVA CON R2)
         // =========================================================
-        if (final_trig_r)   // solo cuando disparas con R2
+        if (final_trig_l && !final_trig_r)   // aim assist cuando se presiona L2, pero se desactiva si se presiona R2
         {
             uint64_t now_ms = to_ms_since_boot(get_absolute_time());
 
