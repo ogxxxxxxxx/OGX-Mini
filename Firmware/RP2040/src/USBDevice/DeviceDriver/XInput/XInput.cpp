@@ -1,4 +1,5 @@
 #include <cstring>
+#include <algorithm>  // Para std::min
 
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
@@ -77,16 +78,17 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
         lb_pressed = current_lb;
 
-        in_report_.trigger_l = gp_in.trigger_l;
-        in_report_.trigger_r = gp_in.trigger_r;
+        // Triggers: Escalar para que lleguen al 100% (asume entrada 0-127, salida 0-255)
+        in_report_.trigger_l = std::min(255, static_cast<int>(gp_in.trigger_l) * 2);
+        in_report_.trigger_r = std::min(255, static_cast<int>(gp_in.trigger_r) * 2);
 
         in_report_.joystick_lx = gp_in.joystick_lx;
         in_report_.joystick_ly = Range::invert(gp_in.joystick_ly);
         in_report_.joystick_rx = gp_in.joystick_rx;
 
-        // Antirecoil: Adjust RY if turbo firing
-        if (current_lb && (in_report_.buttons[1] & XInput::Buttons1::X)) {
-            in_report_.joystick_ry = Range::invert(gp_in.joystick_ry) - 200;  // Arbitrary antirecoil offset
+        // Antirecoil: Always adjust RY when LB is pressed (for antirecoil)
+        if (current_lb) {
+            in_report_.joystick_ry = Range::invert(gp_in.joystick_ry) - 200;  // Antirecoil offset
         } else {
             in_report_.joystick_ry = Range::invert(gp_in.joystick_ry);
         }
