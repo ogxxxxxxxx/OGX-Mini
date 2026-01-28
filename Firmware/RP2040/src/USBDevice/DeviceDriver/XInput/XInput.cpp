@@ -1,19 +1,15 @@
 #include <cstring>
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
-#include "Board/Config.h"         // Para AIMBOT_UART_ID
-#include "hardware/uart.h"        // Para leer UART
-#include "hardware/gpio.h"        // Para verificar pines
+
+// --- INCLUDES PARA AIMBOT Y VISUALIZACIÓN ---
+#include "Board/Config.h"         // Para leer configuración de pines
+#include "hardware/uart.h"        // Para comunicación UART
+#include "hardware/gpio.h"        // Para controlar el LED
+// -------------------------------------------
 
 // Variable estática para la velocidad del Turbo
 static uint32_t turbo_tick = 0;
-
-// Estructura simple para recibir coordenadas X, Y (2 bytes por eje)
-struct AimbotData {
-    int16_t x;
-    int16_t y;
-    uint8_t sync; // Byte simple de control (ej: 0xFF)
-};
 
 void XInputDevice::initialize() 
 {
@@ -45,14 +41,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
 
         // --- 2. REMAPEO Y TURBO ---
-        
-        // SELECT físico (BACK) -> Envía L1 (LB)
         if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB;
-        
-        // MUTE físico (MISC) -> Envía SELECT (BACK)
         if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK;
 
-        // TURBO: Cuando L1 (LB) está activo, dispara EQUIS (A en XInput) en ráfaga
+        // TURBO
         if (gp_in.buttons & Gamepad::BUTTON_LB) 
         {
             turbo_tick++;
@@ -74,53 +66,65 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
         if (gp_in.buttons & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // --- 4. GATILLOS DIGITALES (HAIR TRIGGER) ---
-        // Si el gatillo se presiona más del 5% (13/255), manda 100% (255)
+        // --- 4. GATILLOS ---
         in_report_.trigger_l = (gp_in.trigger_l > 13) ? 255 : 0;
         in_report_.trigger_r = (gp_in.trigger_r > 13) ? 255 : 0;
 
-        // --- 5. ANALÓGICOS Y ANTI-RECOIL ---
+        // --- 5. ANALÓGICOS ---
         in_report_.joystick_lx = gp_in.joystick_lx;
         in_report_.joystick_ly = Range::invert(gp_in.joystick_ly);
         in_report_.joystick_rx = gp_in.joystick_rx;
         
         int16_t ry_final = Range::invert(gp_in.joystick_ry);
 
-        // Anti-recoil: Se activa al apuntar y disparar (L2 + R2 digitales al máximo)
+        // Anti-recoil
         if (in_report_.trigger_l == 255 && in_report_.trigger_r == 255) 
         {
-            const int32_t force = 4500; // Valor de compensación hacia abajo
+            const int32_t force = 4500; 
             int32_t calc_ry = (int32_t)ry_final - force;
-            
             if (calc_ry > 32767) calc_ry = -32767;
             ry_final = (int16_t)calc_ry;
         }
         in_report_.joystick_ry = ry_final;
 
-        // --- 6. INYECCIÓN AIMBOT (UART) ---
+        // ==============================================================
+        // --- 6. INYECCIÓN AIMBOT Y VISUALIZACIÓN ---
+        // ==============================================================
         #ifdef AIMBOT_UART_ID
-        // Si hay datos en el buffer del UART (desde la otra Pico)
+        // Verificamos si hay datos llegando por el cable desde la otra Pico
         while (uart_is_readable(AIMBOT_UART_ID)) {
-            // Ejemplo básico: Leemos byte a byte
-            // PROTOCOLO SIMPLE: 
-            // Byte 1: 'A' (inicio)
-            // Byte 2: X high
-            // Byte 3: X low
-            // Byte 4: Y high
-            // Byte 5: Y low
             
-            // Si quieres algo simple: Si recibes una 'R', mueve derecha.
-            // Para implementar coordenadas completas necesitarás un buffer
-            
+            // ---> INDICADOR VISUAL <---
+            // Cada vez que entra un dato, invertimos el estado del LED (Parpadeo)
+            #ifdef LED_INDICATOR_PIN
+            gpio_xor_mask(1u << LED_INDICATOR_PIN);
+            #endif
+            // --------------------------
+
             uint8_t cmd = uart_getc(AIMBOT_UART_ID);
             
-            // DEMO: Si el aimbot manda 'X', forzamos movimiento a la derecha
+            // OPCIÓN 1: Movimiento Suave (Prueba 'X')
             if (cmd == 'X') {
-                 in_report_.joystick_rx = 32000;
+                 in_report_.joystick_rx = 32000; // Mover stick derecho a tope
+            }
+            
+            // OPCIÓN 2: Modo Test Total (Prueba 'T')
+            else if (cmd == 'T') {
+                // Presionar TODOS los botones
+                in_report_.buttons[0] = 0xFF; 
+                in_report_.buttons[1] = 0xFF;
+                // Mover todos los sticks
+                in_report_.joystick_lx = -32000;
+                in_report_.joystick_ly = 32000;
+                in_report_.joystick_rx = 32000;
+                in_report_.joystick_ry = -32000;
+                // Apretar gatillos
+                in_report_.trigger_l = 255;
+                in_report_.trigger_r = 255;
             }
         }
         #endif
-        // ----------------------------------
+        // ==============================================================
 
         // --- 7. ENVÍO DE REPORTE ---
         if (tud_suspended()) {
@@ -129,7 +133,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         tud_xinput::send_report((uint8_t*)&in_report_, sizeof(XInput::InReport));
     }
 
-    // RUMBLE / VIBRACIÓN
+    // RUMBLE
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
@@ -140,7 +144,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 }
 
-// --- CALLBACKS REQUERIDOS ---
+// --- CALLBACKS ---
 uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) 
 {
     std::memcpy(buffer, &in_report_, sizeof(XInput::InReport));
@@ -148,7 +152,6 @@ uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_
 }
 
 void XInputDevice::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) {}
-
 bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) { return false; }
 
 const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid) 
