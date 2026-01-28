@@ -17,10 +17,24 @@
     #define MAX_GAMEPADS 1
 #endif
 
+// ==============================================================================
+// CONFIGURACIÓN DE PLACAS
+// ==============================================================================
+
 #if defined(CONFIG_OGXM_BOARD_PI_PICO) || defined(CONFIG_OGXM_BOARD_PI_PICO2)
     #define OGXM_BOARD          PI_PICO
-    #define PIO_USB_DP_PIN      5 // DM = 1
+    
+    // --- CONFIGURACIÓN MANDO (USB HOST) ---
+    // Usando pines GP4 y GP5 para el Mando
+    #define PIO_USB_DP_PIN      5  // D+ en GP4 (automáticamente D- será GP5)
     #define LED_INDICATOR_PIN   25
+
+    // --- CONFIGURACIÓN AIMBOT (UART) ---
+    // Usando pines GP0 y GP1 para comunicarse con la otra Pico
+    #define AIMBOT_UART_ID      uart0
+    #define AIMBOT_TX_PIN       0
+    #define AIMBOT_RX_PIN       1
+    // -----------------------------------
 
 #elif defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W)
     #define OGXM_BOARD          PI_PICOW
