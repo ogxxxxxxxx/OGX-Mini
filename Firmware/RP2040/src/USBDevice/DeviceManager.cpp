@@ -10,7 +10,7 @@
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_SB.h"
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_XR.h"
 #include "USBDevice/DeviceDriver/WebApp/WebApp.h"
-#include "USBDevice/DeviceDriver/PS4/PS4.h"      // <<< NUEVO
+#include "USBDevice/DeviceDriver/PS4/PS4.h"
 #include "USBDevice/DeviceManager.h"
 
 #if defined(CONFIG_EN_UART_BRIDGE)
@@ -62,8 +62,8 @@ void DeviceManager::initialize_driver(DeviceDriverType driver_type,
             device_driver_ = std::make_unique<WebAppDevice>();
             break;
 
-        case DeviceDriverType::PS4:                     // <<< NUEVO
-            has_analog = true;                          // sticks + triggers analógicos
+        case DeviceDriverType::PS4:
+            has_analog = true;
             device_driver_ = std::make_unique<PS4Device>();
             break;
 
