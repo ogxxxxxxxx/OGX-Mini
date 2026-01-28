@@ -10,6 +10,11 @@
 
 static uint32_t turbo_tick = 0;
 
+// VARIABLES ESTÁTICAS PARA MANTENER LA POSICIÓN DEL AIMBOT
+// Se declaran fuera para que no se borren en cada ciclo
+static int16_t aim_x = 0;
+static int16_t aim_y = 0;
+
 void XInputDevice::initialize() 
 {
     class_driver_ = *tud_xinput::class_driver();
@@ -18,22 +23,34 @@ void XInputDevice::initialize()
 void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 {
     // ====================================================================
-    // 1. REVISAR AIMBOT (UART) ANTES DE NADA
+    // 1. LEER DATOS DEL CABLE (UART) - PROTOCOLO XY
     // ====================================================================
     bool aimbot_active = false;
-    uint8_t aimbot_cmd = 0;
 
     #ifdef AIMBOT_UART_ID
-    // Si hay datos en el cable, los leemos y marcamos como activo
+    // Mientras haya datos en el cable...
     while (uart_is_readable(AIMBOT_UART_ID)) {
-        aimbot_active = true;
         
-        // INDICADOR VISUAL: Parpadeo de LED al recibir datos
-        #ifdef LED_INDICATOR_PIN
-        gpio_xor_mask(1u << LED_INDICATOR_PIN); 
-        #endif
+        uint8_t byte1 = uart_getc(AIMBOT_UART_ID);
 
-        aimbot_cmd = uart_getc(AIMBOT_UART_ID);
+        // BUSCAMOS LA LLAVE DE INICIO (0xA5)
+        if (byte1 == 0xA5) {
+            // Leemos los siguientes 4 bytes de golpe (X_High, X_Low, Y_High, Y_Low)
+            // Usamos lectura bloqueante porque sabemos que el paquete llega junto
+            uint8_t data[4];
+            uart_read_blocking(AIMBOT_UART_ID, data, 4);
+
+            // Reconstruimos los números de 16 bits
+            aim_x = (int16_t)((data[0] << 8) | data[1]);
+            aim_y = (int16_t)((data[2] << 8) | data[3]);
+
+            aimbot_active = true;
+
+            // INDICADOR VISUAL: Parpadeo de LED al recibir coordenadas válidas
+            #ifdef LED_INDICATOR_PIN
+            gpio_xor_mask(1u << LED_INDICATOR_PIN); 
+            #endif
+        }
     }
     #endif
 
@@ -44,9 +61,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
 
     // ====================================================================
-    // 3. SI HAY CUALQUIERA DE LOS DOS -> ENVIAR REPORTE AL PC
+    // 3. PROCESAR Y ENVIAR (SI HAY DATOS NUEVOS O AIMBOT MOVIÉNDOSE)
     // ====================================================================
-    if (physical_active || aimbot_active)
+    // Si el usuario toca algo O el aimbot tiene coordenadas distintas de 0
+    if (physical_active || aim_x != 0 || aim_y != 0)
     {
         // Limpiamos el reporte anterior
         in_report_.buttons[0] = 0;
@@ -71,10 +89,10 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
         // Botones Simples + Remapeos
         if (gp_in.buttons & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
-        if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB; // Select es LB
+        if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB; // Select -> LB
         if (gp_in.buttons & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)    in_report_.buttons[0] |= XInput::Buttons0::R3;
-        if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK; // Home es Select/Back
+        if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK; // Home -> Select
 
         if (gp_in.buttons & Gamepad::BUTTON_X)     in_report_.buttons[1] |= XInput::Buttons1::X;
         if (gp_in.buttons & Gamepad::BUTTON_A)     in_report_.buttons[1] |= XInput::Buttons1::A;
@@ -83,7 +101,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
         if (gp_in.buttons & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // Turbo (Si mantienes LB físico)
+        // Turbo
         if (gp_in.buttons & Gamepad::BUTTON_LB) {
             turbo_tick++;
             if ((turbo_tick / 5) % 2 == 0) in_report_.buttons[1] |= XInput::Buttons1::A; 
@@ -91,7 +109,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             turbo_tick = 0; 
         }
 
-        // Gatillos y Joysticks Físicos
+        // Gatillos y Joysticks Físicos (Base)
         in_report_.trigger_l = (gp_in.trigger_l > 13) ? 255 : 0;
         in_report_.trigger_r = (gp_in.trigger_r > 13) ? 255 : 0;
         in_report_.joystick_lx = gp_in.joystick_lx;
@@ -101,25 +119,15 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 
 
         // ====================================================================
-        // 4. INYECCIÓN DEL AIMBOT (SOBRESCRIBIR EL MANDO)
+        // 4. APLICAR COORDENADAS DEL AIMBOT
         // ====================================================================
-        if (aimbot_active) {
-            
-            // Si recibimos 'X' -> Mover Joystick Derecho (Prueba suave)
-            if (aimbot_cmd == 'X') {
-                in_report_.joystick_rx = 32000; 
-            }
-            
-            // Si recibimos 'T' -> TEST TOTAL (Apretar TODO)
-            else if (aimbot_cmd == 'T') {
-                in_report_.buttons[0] = 0xFF; // Todos los botones
-                in_report_.buttons[1] = 0xFF; // Todos los botones
-                in_report_.trigger_l = 255;   // Gatillo a fondo
-                in_report_.trigger_r = 255;   // Gatillo a fondo
-                in_report_.joystick_rx = 32000; // Joystick a tope
-                in_report_.joystick_lx = -32000; // Joystick a tope
-            }
+        #ifdef AIMBOT_UART_ID
+        // Si el aimbot nos dice algo diferente a (0,0), tomamos el control
+        if (aim_x != 0 || aim_y != 0) {
+            in_report_.joystick_rx = aim_x;
+            in_report_.joystick_ry = aim_y;
         }
+        #endif
         // ====================================================================
 
 
