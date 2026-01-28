@@ -1,5 +1,6 @@
 #include "Board/Config.h"
 #include "OGXMini/Board/Standard.h"
+
 #if ((OGXM_BOARD == PI_PICO) || (OGXM_BOARD == RP2040_ZERO) || (OGXM_BOARD == ADAFRUIT_FEATHER))
 
 #include <pico/multicore.h>
@@ -7,6 +8,11 @@
 #include "tusb.h"
 #include "bsp/board_api.h"
 #include "pio_usb.h"
+
+// --- INCLUDES NECESARIOS PARA AIMBOT (UART) ---
+#include "hardware/uart.h"
+#include "hardware/gpio.h"
+// ---------------------------------------------
 
 #include "USBHost/HostManager.h"
 #include "USBDevice/DeviceManager.h"
@@ -82,6 +88,18 @@ void standard::host_mounted(bool host_mounted) {
 void standard::initialize() {
     board_api::init_board();
 
+    // --- CONFIGURACIÓN UART PARA AIMBOT ---
+    // Esto habilita la comunicación con la segunda Pico
+    #if defined(AIMBOT_UART_ID)
+        uart_init(AIMBOT_UART_ID, 115200);
+        gpio_set_function(AIMBOT_TX_PIN, GPIO_FUNC_UART);
+        gpio_set_function(AIMBOT_RX_PIN, GPIO_FUNC_UART);
+        uart_set_format(AIMBOT_UART_ID, 8, 1, UART_PARITY_NONE);
+        uart_set_hw_flow(AIMBOT_UART_ID, false, false);
+        uart_set_fifo_enabled(AIMBOT_UART_ID, true);
+    #endif
+    // -------------------------------------
+
     UserSettings& user_settings = UserSettings::get_instance();
     user_settings.initialize_flash();
 
@@ -124,11 +142,5 @@ void standard::run() {
         sleep_ms(1);
     }
 }
-
-// #else // OGXM_BOARD == PI_PICO || OGXM_BOARD == RP2040_ZERO || OGXM_BOARD == ADAFRUIT_FEATHER
-
-// void standard::host_mounted(bool host_mounted) {}
-// void standard::initialize() {}
-// void standard::run() {}
 
 #endif // OGXM_BOARD == PI_PICO || OGXM_BOARD == RP2040_ZERO || OGXM_BOARD == ADAFRUIT_FEATHER
