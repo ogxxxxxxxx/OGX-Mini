@@ -2,7 +2,7 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 
-// Variable estática para el contador del Turbo
+// Contador para la ráfaga del Turbo
 static uint32_t turbo_tick = 0;
 
 void XInputDevice::initialize() 
@@ -14,13 +14,13 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 {
     if (gamepad.new_pad_in())
     {
-        // Limpiar botones antes de remapear
+        // Reiniciar estados de botones en cada reporte
         in_report_.buttons[0] = 0;
         in_report_.buttons[1] = 0;
 
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
 
-        // --- 1. DPAD LOGIC ---
+        // --- 1. DPAD (Cruceta) ---
         switch (gp_in.dpad)
         {
             case Gamepad::DPAD_UP:         in_report_.buttons[0] = XInput::Buttons0::DPAD_UP; break;
@@ -34,27 +34,27 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             default: break;
         }
 
-        // --- 2. REMAPEO SOLICITADO ---
+        // --- 2. REMAPEO DE BOTONES ---
         
-        // SELECT (BACK) ahora activa L1 (LB en XInput)
+        // Físico SELECT (BACK) -> Envía L1 (LB)
         if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB;
         
-        // El botón SYSTEM/HOME (en lugar de MUTE) ahora activa SELECT (BACK en XInput)
-        if (gp_in.buttons & Gamepad::BUTTON_SYS)   in_report_.buttons[0] |= XInput::Buttons0::BACK;
+        // Físico MUTE (MISC) -> Envía SELECT (BACK)
+        if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK;
 
-        // --- 3. MACRO TURBO L1 (LB) -> EQUIS (A en XInput) ---
-        // Al presionar el botón físico L1 (LB), se activa el turbo de A
+        // --- 3. MACRO TURBO: L1 (LB) -> EQUIS (A de Xbox/XInput) ---
         if (gp_in.buttons & Gamepad::BUTTON_LB) 
         {
             turbo_tick++;
-            if ((turbo_tick / 10) % 2 == 0) {
+            // Cada 5 ciclos cambia de estado (Presionado/Soltado)
+            if ((turbo_tick / 5) % 2 == 0) {
                 in_report_.buttons[1] |= XInput::Buttons1::A; 
             }
         } else {
             turbo_tick = 0; 
         }
 
-        // --- 4. OTROS BOTONES ---
+        // --- 4. ASIGNACIÓN DE BOTONES RESTANTES ---
         if (gp_in.buttons & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
         if (gp_in.buttons & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)    in_report_.buttons[0] |= XInput::Buttons0::R3;
@@ -64,35 +64,46 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_Y)     in_report_.buttons[1] |= XInput::Buttons1::Y;
         if (gp_in.buttons & Gamepad::BUTTON_B)     in_report_.buttons[1] |= XInput::Buttons1::B;
         if (gp_in.buttons & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
-        // El botón HOME físico ya lo usamos para SELECT arriba, si quieres que también haga HOME:
-        // if (gp_in.buttons & Gamepad::BUTTON_SYS)  in_report_.buttons[1] |= XInput::Buttons1::HOME;
+        if (gp_in.buttons & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // --- 5. GATILLOS Y STICKS CON ANTI-RECOIL ---
+        // --- 5. GATILLOS ---
         in_report_.trigger_l = gp_in.trigger_l;
         in_report_.trigger_r = gp_in.trigger_r;
 
+        // --- 6. STICKS Y ANTI-RECOIL ---
+        // Stick Izquierdo normal
         in_report_.joystick_lx = gp_in.joystick_lx;
         in_report_.joystick_ly = Range::invert(gp_in.joystick_ly);
+        
+        // Stick Derecho (RX normal, RY con procesamiento para Anti-recoil)
         in_report_.joystick_rx = gp_in.joystick_rx;
         
-        int16_t ry = Range::invert(gp_in.joystick_ry);
+        int16_t ry_final = Range::invert(gp_in.joystick_ry);
 
-        // ANTI-RECOIL: Al pulsar L2 + R2
-        if (gp_in.trigger_l > 100 && gp_in.trigger_r > 100) 
+        // Lógica Anti-recoil: Activado al pulsar L2 y R2 simultáneamente
+        // Nota: Ajustamos el umbral a 50 para que actúe rápido
+        if (gp_in.trigger_l > 50 && gp_in.trigger_r > 50) 
         {
-            int32_t compensation = 600; // Ajusta este valor si la mira baja mucho o poco
-            if ((int32_t)ry + compensation > 32767) ry = 32767;
-            else ry += (int16_t)compensation;
+            // Fuerza del anti-recoil. Si no es suficiente, sube este valor a 3000 o 4000.
+            const int16_t recoil_force = 2000; 
+            
+            // Verificamos desbordamiento antes de sumar
+            if (ry_final > (32767 - recoil_force)) {
+                ry_final = 32767;
+            } else {
+                ry_final += recoil_force;
+            }
         }
-        in_report_.joystick_ry = ry;
+        in_report_.joystick_ry = ry_final;
 
-        // Envío
+        // --- 7. ENVÍO DE DATOS ---
         if (tud_suspended()) {
             tud_remote_wakeup();
         }
         tud_xinput::send_report((uint8_t*)&in_report_, sizeof(XInput::InReport));
     }
 
+    // Procesar Rumble (vibración) entrante
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
@@ -103,7 +114,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 }
 
-// Resto de funciones (get_report_cb, etc.) se mantienen igual que en tu original
+// Callbacks estándar de la clase
 uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) 
 {
     std::memcpy(buffer, &in_report_, sizeof(XInput::InReport));
