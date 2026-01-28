@@ -2,11 +2,11 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 
-// --- INCLUDES ---
+// --- INCLUDES OBLIGATORIOS PARA AIMBOT ---
 #include "Board/Config.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
-// ----------------
+// -----------------------------------------
 
 static uint32_t turbo_tick = 0;
 
@@ -17,15 +17,18 @@ void XInputDevice::initialize()
 
 void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 {
-    // 1. Verificamos SIEMPRE si hay datos del Aimbot (UART)
+    // ====================================================================
+    // 1. REVISAR AIMBOT (UART) ANTES DE NADA
+    // ====================================================================
     bool aimbot_active = false;
     uint8_t aimbot_cmd = 0;
 
     #ifdef AIMBOT_UART_ID
+    // Si hay datos en el cable, los leemos y marcamos como activo
     while (uart_is_readable(AIMBOT_UART_ID)) {
         aimbot_active = true;
         
-        // PARPADEO LED: Si entramos aquí, la conexión física está bien
+        // INDICADOR VISUAL: Parpadeo de LED al recibir datos
         #ifdef LED_INDICATOR_PIN
         gpio_xor_mask(1u << LED_INDICATOR_PIN); 
         #endif
@@ -34,20 +37,25 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
     #endif
 
-    // 2. Verificamos si hay input físico del mando real
+    // ====================================================================
+    // 2. REVISAR INPUT FÍSICO (MANDO REAL)
+    // ====================================================================
     bool physical_active = gamepad.new_pad_in();
 
-    // 3. Si hay CUALQUIERA de los dos, procesamos y enviamos
+
+    // ====================================================================
+    // 3. SI HAY CUALQUIERA DE LOS DOS -> ENVIAR REPORTE AL PC
+    // ====================================================================
     if (physical_active || aimbot_active)
     {
-        // Resetear reporte limpio
+        // Limpiamos el reporte anterior
         in_report_.buttons[0] = 0;
         in_report_.buttons[1] = 0;
 
-        // Obtenemos el estado actual físico (aunque no haya cambiado)
+        // Obtenemos el estado de los botones físicos
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
 
-        // --- PROCESAMIENTO ESTÁNDAR (FÍSICO) ---
+        // --- PROCESAMIENTO FÍSICO ESTÁNDAR ---
         
         // DPAD
         switch (gp_in.dpad) {
@@ -61,12 +69,12 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             case Gamepad::DPAD_DOWN_RIGHT: in_report_.buttons[0] |= XInput::Buttons0::DPAD_DOWN | XInput::Buttons0::DPAD_RIGHT; break;
         }
 
-        // Botones Simples
+        // Botones Simples + Remapeos
         if (gp_in.buttons & Gamepad::BUTTON_START) in_report_.buttons[0] |= XInput::Buttons0::START;
-        if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB; // Remapeo Select
+        if (gp_in.buttons & Gamepad::BUTTON_BACK)  in_report_.buttons[1] |= XInput::Buttons1::LB; // Select es LB
         if (gp_in.buttons & Gamepad::BUTTON_L3)    in_report_.buttons[0] |= XInput::Buttons0::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)    in_report_.buttons[0] |= XInput::Buttons0::R3;
-        if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK; // Remapeo Home
+        if (gp_in.buttons & Gamepad::BUTTON_MISC)  in_report_.buttons[0] |= XInput::Buttons0::BACK; // Home es Select/Back
 
         if (gp_in.buttons & Gamepad::BUTTON_X)     in_report_.buttons[1] |= XInput::Buttons1::X;
         if (gp_in.buttons & Gamepad::BUTTON_A)     in_report_.buttons[1] |= XInput::Buttons1::A;
@@ -75,7 +83,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_RB)    in_report_.buttons[1] |= XInput::Buttons1::RB;
         if (gp_in.buttons & Gamepad::BUTTON_SYS)   in_report_.buttons[1] |= XInput::Buttons1::HOME;
 
-        // Turbo
+        // Turbo (Si mantienes LB físico)
         if (gp_in.buttons & Gamepad::BUTTON_LB) {
             turbo_tick++;
             if ((turbo_tick / 5) % 2 == 0) in_report_.buttons[1] |= XInput::Buttons1::A; 
@@ -83,7 +91,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             turbo_tick = 0; 
         }
 
-        // Analógicos Físicos
+        // Gatillos y Joysticks Físicos
         in_report_.trigger_l = (gp_in.trigger_l > 13) ? 255 : 0;
         in_report_.trigger_r = (gp_in.trigger_r > 13) ? 255 : 0;
         in_report_.joystick_lx = gp_in.joystick_lx;
@@ -91,29 +99,36 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         in_report_.joystick_rx = gp_in.joystick_rx;
         in_report_.joystick_ry = Range::invert(gp_in.joystick_ry);
 
-        // --- INYECCIÓN AIMBOT (Sobre-escribe lo físico) ---
+
+        // ====================================================================
+        // 4. INYECCIÓN DEL AIMBOT (SOBRESCRIBIR EL MANDO)
+        // ====================================================================
         if (aimbot_active) {
+            
+            // Si recibimos 'X' -> Mover Joystick Derecho (Prueba suave)
             if (aimbot_cmd == 'X') {
-                in_report_.joystick_rx = 32000; // Mover a la derecha
+                in_report_.joystick_rx = 32000; 
             }
+            
+            // Si recibimos 'T' -> TEST TOTAL (Apretar TODO)
             else if (aimbot_cmd == 'T') {
-                // Test Total
-                in_report_.buttons[0] = 0xFF; 
-                in_report_.buttons[1] = 0xFF;
-                in_report_.trigger_l = 255;
-                in_report_.trigger_r = 255;
-                in_report_.joystick_rx = 32000;
-                in_report_.joystick_lx = -32000;
+                in_report_.buttons[0] = 0xFF; // Todos los botones
+                in_report_.buttons[1] = 0xFF; // Todos los botones
+                in_report_.trigger_l = 255;   // Gatillo a fondo
+                in_report_.trigger_r = 255;   // Gatillo a fondo
+                in_report_.joystick_rx = 32000; // Joystick a tope
+                in_report_.joystick_lx = -32000; // Joystick a tope
             }
         }
-        // -----------------------------------------------
+        // ====================================================================
 
-        // Enviar
+
+        // Enviar datos al PC
         if (tud_suspended()) tud_remote_wakeup();
         tud_xinput::send_report((uint8_t*)&in_report_, sizeof(XInput::InReport));
     }
 
-    // RUMBLE
+    // Procesar Vibración (Rumble) desde el PC hacia el mando
     if (tud_xinput::receive_report(reinterpret_cast<uint8_t*>(&out_report_), sizeof(XInput::OutReport)) &&
         out_report_.report_id == XInput::OutReportID::RUMBLE)
     {
@@ -124,7 +139,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
     }
 }
 
-// CALLBACKS (Igual que antes)
+// CALLBACKS ESTÁNDAR
 uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) 
 {
     std::memcpy(buffer, &in_report_, sizeof(XInput::InReport));
@@ -132,6 +147,7 @@ uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_
 }
 void XInputDevice::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) {}
 bool XInputDevice::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) { return false; }
+
 const uint16_t * XInputDevice::get_descriptor_string_cb(uint8_t index, uint16_t langid) 
 {
     const char *value = reinterpret_cast<const char*>(XInput::DESC_STRING[index]);
