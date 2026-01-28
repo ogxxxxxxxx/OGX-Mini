@@ -1,9 +1,19 @@
 #include <cstring>
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
+#include "Board/Config.h"         // Para AIMBOT_UART_ID
+#include "hardware/uart.h"        // Para leer UART
+#include "hardware/gpio.h"        // Para verificar pines
 
 // Variable estática para la velocidad del Turbo
 static uint32_t turbo_tick = 0;
+
+// Estructura simple para recibir coordenadas X, Y (2 bytes por eje)
+struct AimbotData {
+    int16_t x;
+    int16_t y;
+    uint8_t sync; // Byte simple de control (ej: 0xFF)
+};
 
 void XInputDevice::initialize() 
 {
@@ -87,7 +97,32 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         }
         in_report_.joystick_ry = ry_final;
 
-        // --- 6. ENVÍO DE REPORTE ---
+        // --- 6. INYECCIÓN AIMBOT (UART) ---
+        #ifdef AIMBOT_UART_ID
+        // Si hay datos en el buffer del UART (desde la otra Pico)
+        while (uart_is_readable(AIMBOT_UART_ID)) {
+            // Ejemplo básico: Leemos byte a byte
+            // PROTOCOLO SIMPLE: 
+            // Byte 1: 'A' (inicio)
+            // Byte 2: X high
+            // Byte 3: X low
+            // Byte 4: Y high
+            // Byte 5: Y low
+            
+            // Si quieres algo simple: Si recibes una 'R', mueve derecha.
+            // Para implementar coordenadas completas necesitarás un buffer
+            
+            uint8_t cmd = uart_getc(AIMBOT_UART_ID);
+            
+            // DEMO: Si el aimbot manda 'X', forzamos movimiento a la derecha
+            if (cmd == 'X') {
+                 in_report_.joystick_rx = 32000;
+            }
+        }
+        #endif
+        // ----------------------------------
+
+        // --- 7. ENVÍO DE REPORTE ---
         if (tud_suspended()) {
             tud_remote_wakeup();
         }
