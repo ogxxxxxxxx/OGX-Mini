@@ -26,7 +26,7 @@
     
     // --- CONFIGURACIÓN MANDO (USB HOST) ---
     // Usando pines GP4 y GP5 para el Mando
-    #define PIO_USB_DP_PIN      5  // D+ en GP4 (automáticamente D- será GP5)
+    #define PIO_USB_DP_PIN      9  // D+ en GP4 (automáticamente D- será GP5)
     #define LED_INDICATOR_PIN   25
 
     // --- CONFIGURACIÓN AIMBOT (UART) ---
