@@ -1,4 +1,9 @@
 // --- INCLUDES ---
+#include <cstring>
+#include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
+#include "USBDevice/DeviceDriver/XInput/XInput.h"
+
+// --- INCLUDES ---
 #include "Board/Config.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
@@ -156,7 +161,7 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 // CALLBACKS
 uint16_t XInputDevice::get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer, uint16_t reqlen) 
 {
-    std::memcpy(buffer, &in_report_, sizeof(XInput::InReport));
+    memcpy(buffer, &in_report_, sizeof(XInput::InReport));
     return sizeof(XInput::InReport);
 }
 void XInputDevice::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) {}
