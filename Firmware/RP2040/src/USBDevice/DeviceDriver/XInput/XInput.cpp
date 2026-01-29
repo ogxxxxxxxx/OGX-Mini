@@ -1,14 +1,8 @@
-#include <cstring>
-#include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
-#include "USBDevice/DeviceDriver/XInput/XInput.h"
-
 // --- INCLUDES ---
 #include "Board/Config.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 // ----------------
-
-static uint32_t turbo_tick = 0;
 
 // VARIABLES ESTÁTICAS PARA EL AIMBOT
 static int16_t aim_x = 0;
@@ -31,10 +25,10 @@ void XInputDevice::initialize()
 void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 {
     // ====================================================================
-    // 1. LEER DATOS DEL AIMBOT (UART)
+    // 1. LEER DATOS DEL AIMBOT (UART) - MEJORADO PARA ESTABILIDAD
     // ====================================================================
     #ifdef AIMBOT_UART_ID
-    while (uart_is_readable(AIMBOT_UART_ID)) {
+    while (uart_is_readable(AIMBOT_UART_ID) && safety_timer < 1000) { // Límite para evitar bucles infinitos
         uint8_t byte1 = uart_getc(AIMBOT_UART_ID);
 
         if (byte1 == 0xA5) {
@@ -44,7 +38,14 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             aim_x = (int16_t)((data[0] << 8) | data[1]);
             aim_y = (int16_t)((data[2] << 8) | data[3]);
             
-            safety_timer = 200; // 200ms de vida para la orden
+            // Validación de datos para prevenir glitches
+            if (abs(aim_x) > 32767 || abs(aim_y) > 32767) {
+                aim_x = 0;
+                aim_y = 0;
+                safety_timer = 0; // Reset inmediato si datos inválidos
+            } else {
+                safety_timer = 500; // Aumentado a 500ms para más estabilidad
+            }
 
             #ifdef LED_INDICATOR_PIN
             gpio_xor_mask(1u << LED_INDICATOR_PIN); 
