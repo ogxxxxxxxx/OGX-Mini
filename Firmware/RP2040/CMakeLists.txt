@@ -25,7 +25,10 @@ set(BLUEPAD32_ROOT ${EXTERNAL_DIR}/bluepad32)
 set(BTSTACK_ROOT ${BLUEPAD32_ROOT}/external/btstack)
 set(PICO_BTSTACK_PATH ${BTSTACK_ROOT})
 set(LIBFIXMATH_PATH ${EXTERNAL_DIR}/libfixmath)
-set(MBEDTLS_PATH ${EXTERNAL_DIR}/mbedtls)  # <--- [CAMBIO 1] RUTA MBEDTLS AÑADIDA
+
+# [CORRECCION IMPORTANTE] Usamos la versión de mbedtls que viene DENTRO del Pico SDK
+# El log de error indicaba que no la encontraba en 'external', así que usamos esta variable:
+set(MBEDTLS_PATH ${PICO_SDK_PATH}/lib/mbedtls)
 
 #get_pico_sdk(${EXTERNAL_DIR} ${PICOSDK_VERSION_TAG})
 init_git_submodules(${EXTERNAL_DIR}
@@ -92,12 +95,12 @@ set(LIBS_BOARD
     #fix16
     libfixmath
     # Crypto para PS4
-    mbedtls        # <--- [CAMBIO 2] LIBRERÍA AÑADIDA
-    mbedcrypto     # <--- [CAMBIO 2] LIBRERÍA AÑADIDA
+    mbedtls
+    mbedcrypto
 )
 
 set(INC_DIRS_BOARD
-    ${MBEDTLS_PATH}/include  # <--- [CAMBIO 3] INCLUDES AÑADIDOS
+    ${MBEDTLS_PATH}/include
 )
 
 # Config options
@@ -395,7 +398,7 @@ endif()
 
 add_subdirectory(${LIBFIXMATH_PATH} libfixmath)
 
-# --- INSTRUCCIONES DE COMPILACIÓN MBEDTLS AÑADIDAS --- [CAMBIO 4]
+# --- INSTRUCCIONES DE COMPILACIÓN MBEDTLS AÑADIDAS ---
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(${MBEDTLS_PATH} mbedtls)
