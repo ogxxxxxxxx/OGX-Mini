@@ -72,7 +72,6 @@ namespace PS4Dev
         uint8_t misc2;
     };
 
-    // ====== REPORTE PRINCIPAL 0x01 (64 bytes) ======
     struct __attribute__((packed)) InReport
     {
         uint8_t reportID;
@@ -117,11 +116,10 @@ namespace PS4Dev
 
     static_assert(sizeof(InReport) == 64, "PS4Dev::InReport debe medir 64 bytes");
 
-    // ====== REPORTE 0x11 (78 bytes) - REQUERIDO POR WARZONE ======
     struct __attribute__((packed)) InReport0x11
     {
-        uint8_t reportID;           // 0x11
-        uint8_t data[77];           // 77 bytes de datos
+        uint8_t reportID;
+        uint8_t data[77];
     };
 
     static_assert(sizeof(InReport0x11) == 78, "PS4Dev::InReport0x11 debe medir 78 bytes");
@@ -150,12 +148,12 @@ namespace PS4Dev
         0x00,       // bDeviceProtocol
         0x40,       // bMaxPacketSize0 (64 bytes)
         
-        // ============ CAMBIO: DS4 V1 (0x05C4) EN VEZ DE V2 (0x09CC) ============
-        0x4C, 0x05, // idVendor  0x054C (Sony Corporation)
-        0xC4, 0x05, // idProduct 0x05C4 (DualShock 4 V1 - Más compatible)
+        // ============ VOLVER A DS4 V2 (0x09CC) ============
+        0x4C, 0x05, // idVendor  0x054C (Sony)
+        0xCC, 0x09, // idProduct 0x09CC (DS4 V2)
         
-        0x00, 0x01, // bcdDevice 1.00 (Versión simple, sin audio USB)
-        // ========================================================================
+        0x00, 0x01, // bcdDevice 1.00
+        // ==================================================
 
         0x01,       // iManufacturer
         0x02,       // iProduct
@@ -244,7 +242,6 @@ namespace PS4Dev
         0x95, 0x04,        //   Report Count (4)
         0xB1, 0x02,        //   Feature
         
-        // ============ REPORTE 0x11 (CRÍTICO PARA WARZONE) ============
         0x85, 0x11,        //   Report ID (17)
         0x09, 0x21,        //   Usage (0x21)
         0x15, 0x00,        //   Logical Minimum (0)
@@ -252,7 +249,6 @@ namespace PS4Dev
         0x75, 0x08,        //   Report Size (8)
         0x95, 0x4D,        //   Report Count (77)
         0x81, 0x02,        //   Input (Data,Var,Abs)
-        // ==============================================================
         
         0x85, 0x12,        //   Report ID (18)
         0x06, 0x02, 0xFF,  //   Usage Page (Vendor Defined 0xFF02)
