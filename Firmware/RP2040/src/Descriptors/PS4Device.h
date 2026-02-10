@@ -20,15 +20,13 @@ namespace PS4Dev
         HAT_DOWN_LEFT = 0x05,
         HAT_LEFT      = 0x06,
         HAT_UP_LEFT   = 0x07,
-        HAT_CENTER    = 0x0F, // Null state (sin pulsar)
+        HAT_CENTER    = 0x0F,
     };
 
     struct __attribute__((packed)) TouchpadXY
     {
         uint8_t counter : 7;
         uint8_t unpressed : 1;
-
-        // 12 bit X, seguido de 12 bit Y
         uint8_t data[3];
 
         void set_x(uint16_t x)
@@ -75,7 +73,6 @@ namespace PS4Dev
         uint8_t misc2;
     };
 
-    // ====== ESTE ES EL REPORTE PRINCIPAL (equivalente a PS4Report en GP2040-CE) ======
     struct __attribute__((packed)) InReport
     {
         uint8_t reportID;
@@ -83,50 +80,36 @@ namespace PS4Dev
         uint8_t leftStickY;
         uint8_t rightStickX;
         uint8_t rightStickY;
-
-        // 4 bits para el d-pad (hat)
         uint8_t dpad : 4;
-
-        // 14 bits para botones (layout GP2040-CE)
-        uint16_t buttonWest : 1;      // Square
-        uint16_t buttonSouth : 1;     // Cross
-        uint16_t buttonEast : 1;      // Circle
-        uint16_t buttonNorth : 1;     // Triangle
+        uint16_t buttonWest : 1;
+        uint16_t buttonSouth : 1;
+        uint16_t buttonEast : 1;
+        uint16_t buttonNorth : 1;
         uint16_t buttonL1 : 1;
         uint16_t buttonR1 : 1;
         uint16_t buttonL2 : 1;
         uint16_t buttonR2 : 1;
-        uint16_t buttonSelect : 1;    // Share
-        uint16_t buttonStart : 1;     // Options
+        uint16_t buttonSelect : 1;
+        uint16_t buttonStart : 1;
         uint16_t buttonL3 : 1;
         uint16_t buttonR3 : 1;
-        uint16_t buttonHome : 1;      // PS
+        uint16_t buttonHome : 1;
         uint16_t buttonTouchpad : 1;
-
-        // 6 bits: contador de reportes
         uint8_t reportCounter : 6;
-
-        // Los 2 bits que sobran se usan internamente como padding
         uint8_t leftTrigger : 8;
         uint8_t rightTrigger : 8;
 
-        // Vendor specific block (54 bytes)
         union
         {
             uint8_t miscData[54];
-
             struct __attribute__((packed))
             {
-                // 16 bit timing counter
                 uint16_t axisTiming;
-
                 PSSensorData sensorData;
-
                 uint8_t touchpadActive : 2;
                 uint8_t padding : 6;
                 uint8_t tpadIncrement;
                 TouchpadData touchpadData;
-
                 uint8_t mystery2[21];
             } gamepad;
         };
@@ -134,27 +117,20 @@ namespace PS4Dev
 
     static_assert(sizeof(InReport) == 64, "PS4Dev::InReport debe medir 64 bytes");
 
-    // -----------------------------
-    // Strings USB (Modificados para parecer Sony Oficial)
-    // -----------------------------
     static const uint8_t STRING_LANGUAGE[]     = { 0x09, 0x04 };
     static const uint8_t STRING_MANUFACTURER[] = "Sony Interactive Entertainment";
     static const uint8_t STRING_PRODUCT[]      = "Wireless Controller";
-    static const uint8_t STRING_SERIAL[]       = "000000000001"; // 12 caracteres (MAC simulada)
+    static const uint8_t STRING_SERIAL[]       = "000000000001";
     static const uint8_t STRING_VERSION[]      = "1.0";
 
     static const uint8_t* const STRING_DESCRIPTORS[] = {
-        STRING_LANGUAGE,
-        STRING_MANUFACTURER,
-        STRING_PRODUCT,
-        STRING_SERIAL,   // Posición 3 (CRÍTICO para Warzone)
-        STRING_VERSION
+        STRING_LANGUAGE,     // Index 0
+        STRING_MANUFACTURER, // Index 1
+        STRING_PRODUCT,      // Index 2
+        STRING_SERIAL,       // Index 3 ← CRÍTICO
+        STRING_VERSION       // Index 4
     };
 
-    // -----------------------------
-    // Device descriptor
-    // VID/PID: Sony DualShock 4 V2 (0x054C:0x09CC)
-    // -----------------------------
     static const uint8_t DEVICE_DESCRIPTORS[] =
     {
         0x12,       // bLength
@@ -165,20 +141,19 @@ namespace PS4Dev
         0x00,       // bDeviceProtocol
         0x40,       // bMaxPacketSize0 (64 bytes)
         
-        // VID/PID DE SONY DUALSHOCK 4 V2
         0x4C, 0x05, // idVendor  0x054C (Sony Corporation)
         0xCC, 0x09, // idProduct 0x09CC (DualShock 4 Gen 2)
 
-        0x00, 0x01, // bcdDevice 1.00
+        // ============ CAMBIO #1: VERSIÓN DEL FIRMWARE ============
+        0x10, 0x03, // bcdDevice 3.10 (Versión real de DS4 v2)
+        // =========================================================
+
         0x01,       // iManufacturer (índice 1)
         0x02,       // iProduct (índice 2)
-        0x03,       // iSerialNumber (índice 3) ← CRÍTICO
+        0x03,       // iSerialNumber (índice 3)
         0x01        // bNumConfigurations
     };
 
-    // -----------------------------
-    // HID report descriptor
-    // -----------------------------
     static const uint8_t REPORT_DESCRIPTORS[] =
     {
         0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
@@ -235,7 +210,7 @@ namespace PS4Dev
         0x95, 0x36,        //   Report Count (54)
         0x81, 0x02,        //   Input (Data,Var,Abs)
 
-        // Feature Reports (necesarios para autenticación PS4)
+        // Feature Reports
         0x85, 0x05,        //   Report ID (5)
         0x09, 0x22,        //   Usage (0x22)
         0x95, 0x1F,        //   Report Count (31)
@@ -246,7 +221,7 @@ namespace PS4Dev
         0x95, 0x2F,        //   Report Count (47)
         0xB1, 0x02,        //   Feature
 
-        0x85, 0x02,        //   Report ID (2) ← CALIBRACIÓN
+        0x85, 0x02,        //   Report ID (2)
         0x09, 0x24,        //   Usage (0x24)
         0x95, 0x24,        //   Report Count (36)
         0xB1, 0x02,        //   Feature
@@ -261,10 +236,15 @@ namespace PS4Dev
         0x95, 0x04,        //   Report Count (4)
         0xB1, 0x02,        //   Feature
         
-        0x85, 0x11,        //   Report ID (17)
-        0x09, 0x27,        //   Usage (0x27)
-        0x95, 0x02,        //   Report Count (2)
-        0xB1, 0x02,        //   Feature
+        // ============ CAMBIO #2: REPORTE 0x11 CORREGIDO ============
+        0x85, 0x11,        //   Report ID (17) ← EL QUE WARZONE BUSCA
+        0x09, 0x21,        //   Usage (0x21)
+        0x15, 0x00,        //   Logical Minimum (0)
+        0x26, 0xFF, 0x00,  //   Logical Maximum (255)
+        0x75, 0x08,        //   Report Size (8)
+        0x95, 0x4D,        //   Report Count (77) ← CRÍTICO: 77 bytes + 1 ID = 78
+        0x81, 0x02,        //   Input (Data,Var,Abs) ← INPUT, no Feature
+        // ===========================================================
         
         0x85, 0x12,        //   Report ID (18)
         0x06, 0x02, 0xFF,  //   Usage Page (Vendor Defined 0xFF02)
@@ -374,7 +354,7 @@ namespace PS4Dev
         0x95, 0x01,        //   Report Count (1)
         0xB1, 0x02,        //   Feature
         
-        0x85, 0xA3,        //   Report ID (163) ← VERSIÓN FIRMWARE
+        0x85, 0xA3,        //   Report ID (163)
         0x09, 0x43,        //   Usage (0x43)
         0x95, 0x30,        //   Report Count (48)
         0xB1, 0x02,        //   Feature
@@ -444,27 +424,26 @@ namespace PS4Dev
         0x95, 0x3F,        //   Report Count (63)
         0xB1, 0x02,        //   Feature
         
-        // Feature Reports de autenticación PS4
         0x06, 0xF0, 0xFF,  // Usage Page (Vendor Defined 0xFFF0)
         0x09, 0x40,        // Usage (0x40)
         0xA1, 0x02,        //   Collection (Logical)
         
-        0x85, 0xF0,        //   Report ID (240) AUTH F0
+        0x85, 0xF0,        //   Report ID (240)
         0x09, 0x47,        //   Usage (0x47)
         0x95, 0x3F,        //   Report Count (63)
         0xB1, 0x02,        //   Feature
         
-        0x85, 0xF1,        //   Report ID (241) AUTH F1
+        0x85, 0xF1,        //   Report ID (241)
         0x09, 0x48,        //   Usage (0x48)
         0x95, 0x3F,        //   Report Count (63)
         0xB1, 0x02,        //   Feature
         
-        0x85, 0xF2,        //   Report ID (242) AUTH F2
+        0x85, 0xF2,        //   Report ID (242)
         0x09, 0x49,        //   Usage (0x49)
         0x95, 0x0F,        //   Report Count (15)
         0xB1, 0x02,        //   Feature
         
-        0x85, 0xF3,        //   Report ID (243) Auth F3 (Reset)
+        0x85, 0xF3,        //   Report ID (243)
         0x0A, 0x01, 0x47,  //   Usage (0x4701)
         0x95, 0x07,        //   Report Count (7)
         0xB1, 0x02,        //   Feature
@@ -473,12 +452,8 @@ namespace PS4Dev
         0xC0,              // End Collection (Application)
     };
 
-    // -----------------------------
-    // Descriptor de configuración
-    // -----------------------------
     static const uint8_t CONFIGURATION_DESCRIPTORS[] =
     {
-        // Configuration Descriptor
         0x09,        // bLength
         0x02,        // bDescriptorType (Configuration)
         0x29, 0x00,  // wTotalLength 41
@@ -486,9 +461,8 @@ namespace PS4Dev
         0x01,        // bConfigurationValue
         0x00,        // iConfiguration
         0x80,        // bmAttributes (Bus powered)
-        0xFA,        // bMaxPower (500mA) ← CRÍTICO para Warzone
+        0xFA,        // bMaxPower (500mA)
 
-        // Interface Descriptor
         0x09,        // bLength
         0x04,        // bDescriptorType (Interface)
         0x00,        // bInterfaceNumber 0
@@ -499,7 +473,6 @@ namespace PS4Dev
         0x00,        // bInterfaceProtocol
         0x00,        // iInterface
 
-        // HID Descriptor
         0x09,        // bLength
         0x21,        // bDescriptorType (HID)
         0x11, 0x01,  // bcdHID 1.11
@@ -509,7 +482,6 @@ namespace PS4Dev
         sizeof(REPORT_DESCRIPTORS) & 0xFF,
         (sizeof(REPORT_DESCRIPTORS) >> 8) & 0xFF,
 
-        // Endpoint IN (device -> host)
         0x07,        // bLength
         0x05,        // bDescriptorType (Endpoint)
         0x81,        // bEndpointAddress (EP1 IN)
@@ -517,7 +489,6 @@ namespace PS4Dev
         0x40, 0x00,  // wMaxPacketSize 64
         0x01,        // bInterval 1ms
 
-        // Endpoint OUT (host -> device)
         0x07,        // bLength
         0x05,        // bDescriptorType (Endpoint)
         0x02,        // bEndpointAddress (EP2 OUT)
