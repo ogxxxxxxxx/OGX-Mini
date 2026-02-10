@@ -9,10 +9,27 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // --------------------------------------------------------------------------------
-// FEATURE REPORTS ESTÁTICOS (CON ID AL INICIO - CRÍTICO PARA WARZONE)
+// FUNCIÓN CRC32 (FIRMA DE SONY - CRÍTICO PARA WARZONE)
 // --------------------------------------------------------------------------------
 
-// Report 0x02: Calibración del controlador (37 bytes con ID incluido)
+uint32_t calculate_ds4_crc32(uint8_t const *buffer, size_t len) {
+    uint32_t crc = 0xffffffff;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t ch = buffer[i];
+        for (size_t j = 0; j < 8; j++) {
+            uint32_t b = (ch ^ crc) & 1;
+            crc >>= 1;
+            if (b) crc ^= 0xedb88320;
+            ch >>= 1;
+        }
+    }
+    return ~crc;
+}
+
+// --------------------------------------------------------------------------------
+// FEATURE REPORTS ESTÁTICOS
+// --------------------------------------------------------------------------------
+
 static constexpr uint8_t output_0x02[] = {
     0x02,
     0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22,
@@ -22,7 +39,6 @@ static constexpr uint8_t output_0x02[] = {
     0x83, 0xdf, 0x0c, 0x00
 };
 
-// Report 0x03: Definición del controlador (48 bytes con ID incluido)
 static constexpr uint8_t output_0x03[] = {
     0x03,
     0x21, 0x27, 0x04, 0xcf, 0x00, 0x2c, 0x56,
@@ -33,14 +49,12 @@ static constexpr uint8_t output_0x03[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-// Report 0x12: Estado de Audio/Batería (16 bytes con ID incluido) ← NUEVO
 static constexpr uint8_t output_0x12[] = {
-    0x12, // Report ID
+    0x12,
     0x00, 0x00, 0x82, 0x21, 0x11, 0x11, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-// Report 0xA3: Versión de firmware y fecha (49 bytes con ID incluido)
 static constexpr uint8_t output_0xa3[] = {
     0xa3,
     0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32,
@@ -52,7 +66,7 @@ static constexpr uint8_t output_0xa3[] = {
 };
 
 // --------------------------------------------------------------------------------
-// HELPERS: MATEMÁTICAS Y CURVAS
+// HELPERS
 // --------------------------------------------------------------------------------
 
 static inline uint8_t map_signed_to_uint8(float signed_val)
@@ -122,7 +136,7 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
 }
 
 // --------------------------------------------------------------------------------
-// MÉTODOS DE LA CLASE PS4Device
+// MÉTODOS DE LA CLASE
 // --------------------------------------------------------------------------------
 
 void PS4Device::initialize()
@@ -140,6 +154,9 @@ void PS4Device::initialize()
     };
     
     report_counter_ = 0;
+    
+    std::memset(&report_0x11_, 0, sizeof(report_0x11_));
+    report_0x11_.reportID = 0x11;
     
     printf("[PS4] Dispositivo inicializado\n");
 }
@@ -284,18 +301,39 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         tud_remote_wakeup();
     }
 
+    // ============ ENVÍO DEL REPORTE 0x11 CON CRC32 (WARZONE) ============
     if (tud_hid_ready())
     {
-        tud_hid_report(
-            0, 
-            reinterpret_cast<uint8_t*>(&report_in_),
-            sizeof(PS4Dev::InReport)
-        );
+        // 1. Preparamos el buffer de 78 bytes para el Reporte 0x11
+        uint8_t report11[78];
+        std::memset(report11, 0, sizeof(report11));
+
+        report11[0] = 0x11; // ID del reporte extendido
+        report11[1] = 0x80; // Configuración (0x80 activa los sensores)
+        report11[2] = 0x20; // Requerido por Warzone
+
+        // 2. Copiamos tus datos actuales (omitimos el ID 0x01 de report_in_)
+        // Copiamos los 63 bytes que vienen después del ID
+        std::memcpy(&report11[3], reinterpret_cast<uint8_t*>(&report_in_) + 1, 63);
+
+        // 3. Calculamos la firma CRC32 (Sony exige un seed de 0xA1)
+        uint8_t crc_buffer[75]; 
+        crc_buffer[0] = 0xA1; // Valor semilla
+        std::memcpy(&crc_buffer[1], report11, 74); // Seed + los primeros 74 bytes del reporte
+        
+        uint32_t final_crc = calculate_ds4_crc32(crc_buffer, 75);
+
+        // 4. Insertamos el CRC32 en los últimos 4 bytes
+        std::memcpy(&report11[74], &final_crc, 4);
+
+        // 5. ¡ENVIAMOS LOS 78 BYTES!
+        tud_hid_report(0, report11, 78);
     }
+    // =====================================================================
 }
 
 // --------------------------------------------------------------------------------
-// CALLBACKS - CON REPORTE 0x12 AGREGADO
+// CALLBACKS
 // --------------------------------------------------------------------------------
 
 uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
@@ -328,7 +366,6 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
             std::memcpy(buffer, output_0x03, len);
             return len;
         }
-        // ============ NUEVO: REPORTE 0x12 (CRÍTICO PARA WARZONE) ============
         else if (report_id == 0x12)
         {
             printf("[PS4] -> Enviando Report 0x12 (Audio/Bateria)\n");
@@ -336,7 +373,6 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
             std::memcpy(buffer, output_0x12, len);
             return len;
         }
-        // ====================================================================
         else if (report_id == 0xA3)
         {
             printf("[PS4] -> Enviando Report 0xA3 (Version)\n");
@@ -352,6 +388,14 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
     
     if (report_type == HID_REPORT_TYPE_INPUT)
     {
+        if (report_id == 0x11)
+        {
+            printf("[PS4] -> Enviando Report 0x11 (Extended)\n");
+            uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport0x11));
+            std::memcpy(buffer, &report_0x11_, len);
+            return len;
+        }
+        
         uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
         std::memcpy(buffer, &report_in_, len);
         return len;
