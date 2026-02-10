@@ -1,46 +1,71 @@
-#ifndef _PS4_DEFINITIONS_H_
-#define _PS4_DEFINITIONS_H_
+#ifndef _PS4_DEVICE_H_
+#define _PS4_DEVICE_H_
 
-#include <stdint.h>
+#include <cstdint>
+#include <cstring>
+#include "USBDevice/DeviceDriver/DeviceDriver.h"
+#include "PS4Device.h" // Asegúrate de que apunte al archivo 1
 
-// Definiciones de Report IDs
-#define PS4_REPORT_ID_INPUT         0x01
-#define PS4_REPORT_ID_INPUT_EXT     0x11 // Importante para Warzone
-#define PS4_REPORT_ID_CALIBRATION   0x02
-#define PS4_REPORT_ID_DEFINITION    0x03
-#define PS4_REPORT_ID_MAC_ADDRESS   0x12
-#define PS4_REPORT_ID_VERSION       0xA3
+// MbedTLS (NECESARIO PARA FIRMAR)
+#include "mbedtls/rsa.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
 
-// Auth Feature Reports (Seguridad)
-#define PS4_AUTH_REPORT_ID_SET_PAYLOAD      0xF0 // Consola manda nonce
-#define PS4_AUTH_REPORT_ID_GET_NONCE        0xF1 // Consola pide firma
-#define PS4_AUTH_REPORT_ID_GET_SIGNING      0xF2 // Estado de firma
-#define PS4_AUTH_REPORT_ID_RESET            0xF3 // Reset
+class PS4Device : public DeviceDriver
+{
+public:
+    void initialize() override;
+    void process(const uint8_t idx, Gamepad& gamepad) override;
 
-// Estructura del Reporte 0x11 (78 bytes)
-typedef struct __attribute__((packed)) {
-    uint8_t report_id;      // 0x11
-    uint8_t data[73];       // Datos de sticks, botones, sensores
-    uint32_t crc32;         // CRC32 final
-} ps4_input_report_0x11_t;
+    uint16_t get_report_cb(uint8_t itf, uint8_t report_id,
+                           hid_report_type_t report_type,
+                           uint8_t *buffer, uint16_t reqlen) override;
 
-// Estructura del Reporte 0x01 (64 bytes)
-typedef struct __attribute__((packed)) {
-    uint8_t report_id;
-    uint8_t left_stick_x;
-    uint8_t left_stick_y;
-    uint8_t right_stick_x;
-    uint8_t right_stick_y;
-    uint8_t dpad_buttons;   // 4 bits dpad, 4 bits shapes
-    uint8_t misc_buttons;   // Triggers, Shoulders, Share, Option, L3, R3
-    uint8_t sys_buttons;    // PS, Touchpad, Counter
-    uint8_t left_trigger;
-    uint8_t right_trigger;
-    uint8_t timestamp[2];
-    uint8_t battery;
-    int16_t gyro[3];
-    int16_t accel[3];
-    uint8_t ext[35];
-} ps4_input_report_0x01_t;
+    void set_report_cb(uint8_t itf, uint8_t report_id,
+                       hid_report_type_t report_type,
+                       uint8_t const *buffer, uint16_t bufsize) override;
 
-#endif // _PS4_DEFINITIONS_H_
+    bool vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                                tusb_control_request_t const *request) override;
+
+    const uint16_t* get_descriptor_string_cb(uint8_t index, uint16_t langid) override;
+    const uint8_t* get_descriptor_device_cb() override;
+    const uint8_t* get_hid_descriptor_report_cb(uint8_t itf) override;
+    const uint8_t* get_descriptor_configuration_cb(uint8_t index) override;
+    const uint8_t* get_descriptor_device_qualifier_cb() override;
+
+private:
+    // Reportes
+    PS4Dev::InReport report_in_;
+    PS4Dev::InReport0x11 report_0x11_;
+    uint8_t report_counter_;
+
+    // === AUTENTICACIÓN PS4 (Host-less) ===
+    void auth_init();       // Cargar llaves RSA
+    void auth_process();    // Firmar nonce
+
+    // Contexto MbedTLS
+    mbedtls_rsa_context rsa_ctx_;
+    mbedtls_entropy_context entropy_;
+    mbedtls_ctr_drbg_context ctr_drbg_;
+    bool keys_loaded_;
+
+    // Variables de Estado Auth
+    uint8_t nonce_id_;
+    uint8_t nonce_buffer_[256];     // Buffer para recibir el desafío (Nonce)
+    uint8_t signature_buffer_[1024]; // Buffer para guardar la firma (Signature)
+    
+    // Estado
+    enum AuthState {
+        AUTH_IDLE,
+        AUTH_WAITING_NONCE,
+        AUTH_CALCULATING_SIGNATURE,
+        AUTH_READY_TO_SEND
+    };
+    volatile AuthState auth_state_;
+    uint8_t send_chunk_counter_; // Para enviar la firma en pedazos
+};
+
+#endif // _PS4_DEVICE_H_
