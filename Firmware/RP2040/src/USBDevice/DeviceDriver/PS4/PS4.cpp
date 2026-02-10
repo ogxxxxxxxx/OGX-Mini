@@ -8,50 +8,60 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // --------------------------------------------------------------------------------
+// FEATURE REPORTS ESTÁTICOS (CRÍTICOS PARA WARZONE)
+// --------------------------------------------------------------------------------
+
+// Report 0x02: Calibración del controlador
+static constexpr uint8_t output_0x02[] = {
+    0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22,
+    0x2a, 0xdd, 0xbb, 0x22, 0x5e, 0xdd, 0x81, 0x22, 
+    0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
+    0xb0, 0xe0, 0xc6, 0x20, 0xb5, 0xe0, 0xb1, 0x20,
+    0x83, 0xdf, 0x0c, 0x00
+};
+
+// Report 0xA3: Versión de firmware y fecha (CRÍTICO PARA WARZONE)
+static constexpr uint8_t output_0xa3[] = {
+    0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32,  // "Jun  9 2"
+    0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,  // "017"
+    0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31,  // "12:36:41"
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x08, 0xb4, 0x01, 0x00, 0x00, 0x00,
+    0x07, 0xa0, 0x10, 0x20, 0x00, 0xa0, 0x02, 0x00
+};
+
+// --------------------------------------------------------------------------------
 // HELPERS: MATEMÁTICAS Y CURVAS
 // --------------------------------------------------------------------------------
 
 // [CORRECCIÓN CRÍTICA] Mapeo de float [-1.0 ... 1.0] a byte [0 ... 255]
-// Usamos 127.5 para asegurar que los extremos toquen exactamente 0 y 255.
 static inline uint8_t map_signed_to_uint8(float signed_val)
 {
-    // Forzamos extremos absolutos si estamos muy cerca
     if (signed_val >= 0.99f) return 255;
     if (signed_val <= -0.99f) return 0;
 
-    // Fórmula centrada precisa:
-    // -1.0 * 127.5 + 127.5 = 0
-    //  0.0 * 127.5 + 127.5 = 127.5 -> 128 (round)
-    //  1.0 * 127.5 + 127.5 = 255
     float mapped = signed_val * 127.5f + 127.5f;
-    
     int out = static_cast<int>(std::round(mapped));
     
-    // Clamp de seguridad final
     if (out < 0) out = 0;
     if (out > 255) out = 255;
     
     return static_cast<uint8_t>(out);
 }
 
-// Función RADIAL corregida para garantizar Circularidad Perfecta y alcance al 100%
+// Función RADIAL para sticks analógicos
 static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
                                             float deadzone_fraction, float gamma, float sensitivity,
                                             uint8_t &out_x, uint8_t &out_y)
 {
     constexpr float INT16_MAX_F = 32767.0f;
-    
-    // [AJUSTE] SNAP ahora en 0.93 según lo solicitado
     constexpr float SNAP_TO_EDGE_THRESHOLD = 0.93f; 
     
-    // Normalizar entrada a [-1.0 ... 1.0]
     float vx = static_cast<float>(in_x) / INT16_MAX_F; 
     float vy = static_cast<float>(in_y) / INT16_MAX_F; 
 
-    // Calcular magnitud (distancia al centro)
     float mag = std::sqrt(vx*vx + vy*vy);
 
-    // Deadzone radial
     if (mag <= deadzone_fraction || mag < 0.001f)
     {
         out_x = 128;
@@ -59,43 +69,30 @@ static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
         return;
     }
 
-    // Clamp de magnitud física errónea
     if (mag > 1.0f) mag = 1.0f;
 
-    // --- LÓGICA DE SNAP ---
-    // Si estamos cerca del borde físico, ignoramos la magnitud y forzamos 1.0 (100%)
-    // Mantenemos solo la dirección (vx/mag, vy/mag)
     if (mag >= SNAP_TO_EDGE_THRESHOLD)
     {
-        float ux = vx / mag; // Vector unitario X
-        float uy = vy / mag; // Vector unitario Y
+        float ux = vx / mag;
+        float uy = vy / mag;
         
-        // Mapeamos directamente el vector unitario -> Garantiza magnitud 1.0
         out_x = map_signed_to_uint8(ux);
         out_y = map_signed_to_uint8(uy);
         return;
     }
 
-    // --- CÁLCULO DE CURVA ---
-    // Remapear magnitud fuera de deadzone a [0..1]
     float adj = (mag - deadzone_fraction) / (1.0f - deadzone_fraction);
     adj = std::fmax(0.0f, std::fmin(1.0f, adj));
 
-    // Aplicar Gamma (Curva de respuesta)
     float out_frac = std::pow(adj, gamma);
-
-    // Aplicar Sensibilidad (Multiplicador de alcance)
     out_frac *= sensitivity;
     
-    // Clamp lógico (no pasar de 1.0 internamente)
     if (out_frac > 1.0f) out_frac = 1.0f;
 
-    // Reconstruir componentes X/Y manteniendo el ángulo original
     float scale = out_frac / mag; 
     float sx = vx * scale;
     float sy = vy * scale;
 
-    // Clamp final de seguridad
     if (sx >  1.0f) sx =  1.0f;
     if (sx < -1.0f) sx = -1.0f;
     if (sy >  1.0f) sy =  1.0f;
@@ -122,6 +119,9 @@ void PS4Device::initialize()
         .xfer_cb          = hidd_xfer_cb,
         .sof              = nullptr
     };
+    
+    // CRÍTICO: Inicializar contador de reportes
+    report_counter_ = 0;
 }
 
 void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
@@ -142,7 +142,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     Gamepad::PadIn gp_in = gamepad.get_pad_in();
     const uint16_t btn   = gp_in.buttons;
 
-    // Detectar botones especiales
     const bool mutePressed  = (btn & Gamepad::BUTTON_MISC) != 0; 
     const bool psPressed    = (btn & Gamepad::BUTTON_SYS)  != 0; 
     const bool sharePressed = (btn & Gamepad::BUTTON_BACK) != 0;
@@ -163,7 +162,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     }
     psPrev = psPressed;
 
-    // Temporizadores
     if (muteActive && time_reached(muteEndTime)) muteActive = false;
     if (psActive && time_reached(psEndTime))     psActive = false;
 
@@ -173,19 +171,21 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     std::memset(&report_in_, 0, sizeof(report_in_));
     report_in_.reportID = 0x01;
 
-    // Touchpad "limpio"
+    // ============ FIX #3: INCREMENTAR CONTADOR (ANTI-BAN) ============
+    report_counter_ = (report_counter_ + 1) & 0x3F; // 6 bits (0-63)
+    report_in_.reportCounter = report_counter_;
+    // ==================================================================
+
+    // Touchpad limpio
     report_in_.gamepad.touchpadActive = 0;
     report_in_.gamepad.touchpadData.p1.unpressed = 1;
     report_in_.gamepad.touchpadData.p2.unpressed = 1;
 
-    // ------------------ STICKS ANALÓGICOS ------------------
-    // Configuración para solucionar el problema de alcance (0.99 -> 1.0)
+    // Sticks analógicos
     constexpr float left_deadzone   = 0.03f; 
     constexpr float right_deadzone  = 0.02f; 
-    constexpr float left_gamma      = 1.8f;   // Curva ancha
-    constexpr float right_gamma     = 1.3f;   // Curva relajada
-    
-    // Sensibilidad aumentada al 110% (1.10) para forzar valores máximos
+    constexpr float left_gamma      = 1.8f;
+    constexpr float right_gamma     = 1.3f;
     constexpr float both_sensitivity = 1.10f; 
 
     apply_stick_steam_radial(gp_in.joystick_lx, gp_in.joystick_ly,
@@ -196,7 +196,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
                              right_deadzone, right_gamma, both_sensitivity,
                              report_in_.rightStickX, report_in_.rightStickY);
 
-    // ------------------ D-PAD (HAT) ------------------
+    // D-PAD
     switch (gp_in.dpad)
     {
         case Gamepad::DPAD_UP:          report_in_.dpad = PS4Dev::HAT_UP;         break;
@@ -210,23 +210,21 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         default:                        report_in_.dpad = PS4Dev::HAT_CENTER;     break;
     }
 
-    // ------------------ BOTONES PRINCIPALES ------------------
+    // Botones principales
     const bool baseSquare = (btn & Gamepad::BUTTON_X) != 0;
     const bool baseCircle = (btn & Gamepad::BUTTON_B) != 0;
 
-    // Aplicar Macro Mute a Cuadrado y Círculo
-    report_in_.buttonWest  = (baseSquare || muteActive) ? 1 : 0; // Square
-    report_in_.buttonEast  = (baseCircle || muteActive) ? 1 : 0; // Circle
-    report_in_.buttonSouth = (btn & Gamepad::BUTTON_A)  ? 1 : 0; // Cross
-    report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y)  ? 1 : 0; // Triangle
+    report_in_.buttonWest  = (baseSquare || muteActive) ? 1 : 0;
+    report_in_.buttonEast  = (baseCircle || muteActive) ? 1 : 0;
+    report_in_.buttonSouth = (btn & Gamepad::BUTTON_A)  ? 1 : 0;
+    report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y)  ? 1 : 0;
 
-    // ------------------ TRIGGERS / SHOULDERS (REMAP) ------------------
+    // Triggers/Shoulders
     const bool physL1 = (btn & Gamepad::BUTTON_LB) != 0; 
     const bool physR1 = (btn & Gamepad::BUTTON_RB) != 0; 
-    const bool physL2 = gp_in.trigger_l; // Asumimos trigger digital (bool) en tu lógica
+    const bool physL2 = gp_in.trigger_l;
     const bool physR2 = gp_in.trigger_r; 
 
-    // Valores por defecto
     bool virtL1 = physL1;
     bool virtR1 = false;
     bool virtL2 = false;
@@ -234,35 +232,31 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     uint8_t trigL_val = 0;
     uint8_t trigR_val = 0;
 
-    // Aplicar lógica de intercambio
-    if (physR1) // R1 Físico -> R2 Virtual
+    if (physR1)
     {
         virtR2 = true;
-        trigR_val = 0xFF; // Eje al máximo
+        trigR_val = 0xFF;
     }
 
-    if (physR2) // R2 Físico -> L2 Virtual
+    if (physR2)
     {
         virtL2 = true;
-        trigL_val = 0xFF; // Eje al máximo
+        trigL_val = 0xFF;
     }
 
-    if (physL2) // L2 Físico -> R1 Virtual
+    if (physL2)
     {
         virtR1 = true;
     }
     
-    // Sobrescribir por Macro PS (si está activa)
-    // Macro PS: R1 + L2 + Triangle
     if (psActive)
     {
-        virtR1 = true;      // R1
-        virtL2 = true;      // L2
-        trigL_val = 0xFF;   // L2 eje max
-        report_in_.buttonNorth = 1; // Triangle
+        virtR1 = true;
+        virtL2 = true;
+        trigL_val = 0xFF;
+        report_in_.buttonNorth = 1;
     }
 
-    // Asignar al reporte final
     report_in_.buttonL1 = virtL1 ? 1 : 0;
     report_in_.buttonR1 = virtR1 ? 1 : 0;
     report_in_.buttonL2 = virtL2 ? 1 : 0;
@@ -270,7 +264,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.leftTrigger  = trigL_val;
     report_in_.rightTrigger = trigR_val;
 
-    // ------------------ OTROS BOTONES ------------------
+    // Otros botones
     report_in_.buttonL3 = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
     report_in_.buttonR3 = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
 
@@ -279,7 +273,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.buttonHome     = psPressed ? 1 : 0;
     report_in_.buttonTouchpad = sharePressed ? 1 : 0;
 
-    // ------------------ ENVIAR USB ------------------
+    // Enviar USB
     if (tud_suspended())
     {
         tud_remote_wakeup();
@@ -296,7 +290,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 }
 
 // --------------------------------------------------------------------------------
-// CALLBACKS - AQUÍ ESTÁ EL ARREGLO PARA WARZONE
+// CALLBACKS - CON LOS 3 FIXES APLICADOS
 // --------------------------------------------------------------------------------
 
 uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
@@ -305,25 +299,25 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
 {
     (void)itf;
     
-    // ============ AGREGADO PARA WARZONE ============
-    // Warzone requiere el Feature Report 0x02 para validar el mando
-    if (report_id == 0x02 && report_type == HID_REPORT_TYPE_FEATURE)
+    // ============ FIX #1: RESPONDER AL REPORTE 0xA3 ============
+    if (report_type == HID_REPORT_TYPE_FEATURE)
     {
-        // Trama de calibración exacta que espera el juego (COPIADA DE GP2040-CE)
-        static const uint8_t ps4_calibration[] = {
-            0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22,
-            0x2a, 0xdd, 0xbb, 0x22, 0x5e, 0xdd, 0x81, 0x22, 
-            0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
-            0xb0, 0xe0, 0xc6, 0x20, 0xb5, 0xe0, 0xb1, 0x20,
-            0x83, 0xdf, 0x0c, 0x00
-        };
-        uint16_t len = std::min<uint16_t>(reqlen, sizeof(ps4_calibration));
-        std::memcpy(buffer, ps4_calibration, len);
-        return len;
+        if (report_id == 0x02) // Calibración
+        {
+            uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x02));
+            std::memcpy(buffer, output_0x02, len);
+            return len;
+        }
+        else if (report_id == 0xA3) // Versión de firmware (CRÍTICO)
+        {
+            uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0xa3));
+            std::memcpy(buffer, output_0xa3, len);
+            return len;
+        }
     }
-    // ===============================================
+    // ===========================================================
     
-    // Manejo estándar de Input Reports (original)
+    // Input Reports
     if (report_type == HID_REPORT_TYPE_INPUT)
     {
         uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
@@ -348,12 +342,25 @@ bool PS4Device::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
     return false;
 }
 
+// ============ FIX #2: CORREGIR ÍNDICE 0 DE STRINGS ============
 const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
     (void)langid;
+    
+    // Index 0 es SIEMPRE la tabla de idiomas (no texto)
+    if (index == 0)
+    {
+        static uint16_t lang_descriptor[2];
+        lang_descriptor[0] = (0x03 << 8) | (2 * 1 + 2); // bLength + bDescriptorType
+        lang_descriptor[1] = 0x0409; // English (US)
+        return lang_descriptor;
+    }
+    
+    // Índices 1-4: strings reales
     const char* value = reinterpret_cast<const char*>(PS4Dev::STRING_DESCRIPTORS[index]);
     return get_string_descriptor(value, index);
 }
+// ==============================================================
 
 const uint8_t* PS4Device::get_descriptor_device_cb()
 {
