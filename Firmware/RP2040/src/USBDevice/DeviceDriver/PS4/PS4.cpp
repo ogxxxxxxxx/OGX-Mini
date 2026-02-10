@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>  // ← AGREGAR ESTA LÍNEA PARA printf
 
 #include "pico/time.h" // make_timeout_time_ms, time_reached
 
@@ -19,6 +20,17 @@ static constexpr uint8_t output_0x02[] = {
     0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
     0xb0, 0xe0, 0xc6, 0x20, 0xb5, 0xe0, 0xb1, 0x20,
     0x83, 0xdf, 0x0c, 0x00
+};
+
+// Report 0x03: Definición del controlador (48 bytes con ID incluido)
+static constexpr uint8_t output_0x03[] = {
+    0x03, // <--- ID REQUERIDO
+    0x21, 0x27, 0x04, 0xcf, 0x00, 0x2c, 0x56,
+    0x08, 0x00, 0x3d, 0x00, 0xe8, 0x03, 0x04, 0x00,
+    0xff, 0x7f, 0x0d, 0x0d, 0x00, 0x00, 0x00, 0x00,
+    0x0D, 0x84, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
 // Report 0xA3: Versión de firmware y fecha (49 bytes con ID incluido)
@@ -122,6 +134,8 @@ void PS4Device::initialize()
     
     // Inicializar contador de reportes
     report_counter_ = 0;
+    
+    printf("[PS4] Dispositivo inicializado\n");
 }
 
 void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
@@ -287,7 +301,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 }
 
 // --------------------------------------------------------------------------------
-// CALLBACKS - VERSIÓN FINAL CORREGIDA
+// CALLBACKS - CON LOGGING PARA DEBUG
 // --------------------------------------------------------------------------------
 
 uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
@@ -296,20 +310,43 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
 {
     (void)itf;
     
+    // ============ LOGGING PARA DEBUG ============
+    const char* type_name = "UNKNOWN";
+    if (report_type == HID_REPORT_TYPE_INPUT) type_name = "INPUT";
+    else if (report_type == HID_REPORT_TYPE_OUTPUT) type_name = "OUTPUT";
+    else if (report_type == HID_REPORT_TYPE_FEATURE) type_name = "FEATURE";
+    
+    printf("[PS4] GET_REPORT: ID=0x%02X Type=%s Len=%d\n", 
+           report_id, type_name, reqlen);
+    // ============================================
+    
     // Feature Reports
     if (report_type == HID_REPORT_TYPE_FEATURE)
     {
         if (report_id == 0x02) // Calibración
         {
+            printf("[PS4] -> Enviando Report 0x02 (Calibracion)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x02));
             std::memcpy(buffer, output_0x02, len);
             return len;
         }
+        else if (report_id == 0x03) // Definición del controlador
+        {
+            printf("[PS4] -> Enviando Report 0x03 (Definicion)\n");
+            uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x03));
+            std::memcpy(buffer, output_0x03, len);
+            return len;
+        }
         else if (report_id == 0xA3) // Versión de firmware
         {
+            printf("[PS4] -> Enviando Report 0xA3 (Version)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0xa3));
             std::memcpy(buffer, output_0xa3, len);
             return len;
+        }
+        else
+        {
+            printf("[PS4] !!! ADVERTENCIA: Report 0x%02X NO IMPLEMENTADO !!!\n", report_id);
         }
     }
     
