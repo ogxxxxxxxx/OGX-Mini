@@ -18,12 +18,14 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_libs.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/generate_gatt_header.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/get_pico_sdk.cmake)
 
+# --- RUTAS DE LIBRERÍAS EXTERNAS ---
 set(PICO_PIO_USB_PATH ${EXTERNAL_DIR}/Pico-PIO-USB)
 set(PICO_TINYUSB_PATH ${EXTERNAL_DIR}/tinyusb)
 set(BLUEPAD32_ROOT ${EXTERNAL_DIR}/bluepad32)
 set(BTSTACK_ROOT ${BLUEPAD32_ROOT}/external/btstack)
 set(PICO_BTSTACK_PATH ${BTSTACK_ROOT})
 set(LIBFIXMATH_PATH ${EXTERNAL_DIR}/libfixmath)
+set(MBEDTLS_PATH ${EXTERNAL_DIR}/mbedtls)  # <--- [CAMBIO 1] RUTA MBEDTLS AÑADIDA
 
 #get_pico_sdk(${EXTERNAL_DIR} ${PICOSDK_VERSION_TAG})
 init_git_submodules(${EXTERNAL_DIR}
@@ -62,7 +64,7 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/DeviceDriver.cpp
     ${SRC}/USBDevice/DeviceDriver/PSClassic/PSClassic.cpp
     ${SRC}/USBDevice/DeviceDriver/PS3/PS3.cpp
-    ${SRC}/USBDevice/DeviceDriver/PS4/PS4.cpp          # <<< PS4 DEVICE AÑADIDO
+    ${SRC}/USBDevice/DeviceDriver/PS4/PS4.cpp
     ${SRC}/USBDevice/DeviceDriver/Switch/Switch.cpp
     ${SRC}/USBDevice/DeviceDriver/XInput/XInput.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/XboxOG_GP.cpp
@@ -73,6 +75,7 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/tud_xid/tud_xid.cpp
 )
+
 set(LIBS_BOARD
     # Base
     pico_stdlib
@@ -88,8 +91,13 @@ set(LIBS_BOARD
     hardware_irq
     #fix16
     libfixmath
+    # Crypto para PS4
+    mbedtls        # <--- [CAMBIO 2] LIBRERÍA AÑADIDA
+    mbedcrypto     # <--- [CAMBIO 2] LIBRERÍA AÑADIDA
 )
+
 set(INC_DIRS_BOARD
+    ${MBEDTLS_PATH}/include  # <--- [CAMBIO 3] INCLUDES AÑADIDOS
 )
 
 # Config options
@@ -386,6 +394,11 @@ if(EN_BLUETOOTH)
 endif()
 
 add_subdirectory(${LIBFIXMATH_PATH} libfixmath)
+
+# --- INSTRUCCIONES DE COMPILACIÓN MBEDTLS AÑADIDAS --- [CAMBIO 4]
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+add_subdirectory(${MBEDTLS_PATH} mbedtls)
 
 target_link_libraries(${FW_NAME} PRIVATE ${LIBS_BOARD})
 
