@@ -147,10 +147,6 @@ elseif(OGXM_BOARD STREQUAL "RP2040_ZERO")
     set(EN_USB_HOST TRUE)
     set(EN_RGB TRUE)
 
-# elseif(OGXM_BOARD STREQUAL "INTERNAL_4CH")
-#     set(EN_USB_HOST TRUE)
-#     set(EN_4CH TRUE)
-
 elseif(OGXM_BOARD STREQUAL "EXTERNAL_4CH_I2C")
     add_compile_definitions(CONFIG_OGXM_BOARD_EXTERNAL_4CH=1)
     set(EN_USB_HOST TRUE)
@@ -257,10 +253,6 @@ endif()
 if(EN_4CH)
     add_compile_definitions(CONFIG_EN_4CH=1)
     message(STATUS "4CH enabled.")
-    # list(APPEND SOURCES_BOARD
-    #     ${SRC}/I2CDriver/4Channel/I2CMaster.cpp
-    #     ${SRC}/I2CDriver/4Channel/I2CSlave.cpp
-    # )
     list(APPEND LIBS_BOARD
         hardware_i2c
         pico_i2c_slave
@@ -352,7 +344,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         -Wconversion         # Warn on type conversion issues
         -Wsign-conversion    # Warn on sign conversion issues
         -Wno-unused-parameter # Disable warnings for unused parameters
-        # -Werror              # Treat warnings as errors
     )
 
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -360,7 +351,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_definitions(CFG_TUSB_DEBUG=0)
     add_compile_options(
         -O3                     # Optimize for speed
-        # -mcpu=cortex-m0plus     # Target ARM Cortex-M0+
         -mthumb                 # Use Thumb instruction set
         -ffunction-sections     # Place each function in its own section
         -fdata-sections         # Place each data item in its own section
@@ -397,17 +387,25 @@ endif()
 
 add_subdirectory(${LIBFIXMATH_PATH} libfixmath)
 
-# --- INSTRUCCIONES DE COMPILACIÓN MBEDTLS DEFINITIVAS ---
+# --- MBEDTLS BUILD INSTRUCTIONS (FIX REDEFINITION ERRORS) ---
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 
-# Forzamos la desactivación de módulos que fallan en Bare Metal (RP2040)
-add_definitions(-DMBEDTLS_NO_PLATFORM_ENTROPY)
-add_definitions(-DMBEDTLS_TIMING_C=0)
-add_definitions(-DMBEDTLS_HAVE_TIME=0)
-add_definitions(-DMBEDTLS_FS_IO=0)
+# Limpiamos definiciones globales para evitar conflictos
+remove_definitions(-DMBEDTLS_HAVE_TIME)
+remove_definitions(-DMBEDTLS_FS_IO)
+remove_definitions(-DMBEDTLS_TIMING_C)
 
 add_subdirectory(${MBEDTLS_PATH} mbedtls)
+
+# Desactivamos los módulos problemáticos usando Undefine (-U) y No Platform Entropy
+target_compile_definitions(mbedcrypto PUBLIC 
+    MBEDTLS_NO_PLATFORM_ENTROPY
+    MBEDTLS_TEST_NULL_ENTROPY
+)
+
+# Forzamos al compilador a ignorar estas macros para evitar el error "redefined"
+target_compile_options(mbedcrypto PRIVATE "-UMBEDTLS_HAVE_TIME" "-UMBEDTLS_FS_IO" "-UMBEDTLS_TIMING_C")
 
 target_link_libraries(${FW_NAME} PRIVATE ${LIBS_BOARD})
 
@@ -417,8 +415,6 @@ target_compile_definitions(libfixmath PRIVATE
     FIXMATH_NO_CACHE
     FIXMATH_NO_HARD_DIVISION
     FIXMATH_NO_OVERFLOW
-    # FIXMATH_NO_ROUNDING
-    # FIXMATH_OPTIMIZE_8BIT
 )
 
 if(OGXM_RETAIL STREQUAL "TRUE")
