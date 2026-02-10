@@ -9,7 +9,7 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // --------------------------------------------------------------------------------
-// FUNCIÓN CRC32 (FIRMA DE SONY - PARA CUANDO WARZONE PIDA REPORT 0x11)
+// FUNCIÓN CRC32 (FIRMA DE SONY - CRÍTICO PARA WARZONE)
 // --------------------------------------------------------------------------------
 
 uint32_t calculate_ds4_crc32(uint8_t const *buffer, size_t len) {
@@ -155,7 +155,6 @@ void PS4Device::initialize()
     
     report_counter_ = 0;
     
-    // Inicializar Report 0x11 (se usará cuando Warzone lo pida vía get_report_cb)
     std::memset(&report_0x11_, 0, sizeof(report_0x11_));
     report_0x11_.reportID = 0x11;
     
@@ -297,36 +296,97 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.buttonHome     = psPressed ? 1 : 0;
     report_in_.buttonTouchpad = sharePressed ? 1 : 0;
 
-    // Actualizar también el Report 0x11 para cuando Warzone lo pida
+    // ============ PREPARACIÓN DEL REPORT 0x11 (CRÍTICO PARA WARZONE) ============
+    
+    std::memset(&report_0x11_, 0, sizeof(report_0x11_));
+    
     report_0x11_.reportID = 0x11;
-    report_0x11_.data[0] = 0x80; // Config
-    report_0x11_.data[1] = 0x20; // Flag requerido
+    report_0x11_.data[0] = 0xC0; // Configuración: HID + CRC presentes
+    report_0x11_.data[1] = 0x00; // Unused
     
-    // Copiar datos del report_in_ (sin el ID)
-    std::memcpy(&report_0x11_.data[2], reinterpret_cast<uint8_t*>(&report_in_) + 1, 63);
+    // Mapeo manual para asegurar compatibilidad con Sony
+    report_0x11_.data[2] = report_in_.leftStickX;
+    report_0x11_.data[3] = report_in_.leftStickY;
+    report_0x11_.data[4] = report_in_.rightStickX;
+    report_0x11_.data[5] = report_in_.rightStickY;
     
-    // Calcular CRC32 para el Report 0x11
-    uint8_t crc_buffer[75];
+    // Botones (Dpad + Shapes)
+    uint8_t dpad_buttons = (report_in_.dpad & 0x0F) |
+                           (report_in_.buttonWest  << 4) |
+                           (report_in_.buttonSouth << 5) |
+                           (report_in_.buttonEast  << 6) |
+                           (report_in_.buttonNorth << 7);
+    report_0x11_.data[6] = dpad_buttons;
+
+    // Botones (Triggers + Shoulders)
+    uint8_t misc_buttons = (report_in_.buttonL1 << 0) |
+                           (report_in_.buttonR1 << 1) |
+                           (report_in_.buttonL2 << 2) |
+                           (report_in_.buttonR2 << 3) |
+                           (report_in_.buttonSelect << 4) |
+                           (report_in_.buttonStart  << 5) |
+                           (report_in_.buttonL3     << 6) |
+                           (report_in_.buttonR3     << 7);
+    report_0x11_.data[7] = misc_buttons;
+
+    // Botones (PS + Touchpad + Counter)
+    uint8_t sys_buttons = (report_in_.buttonHome << 0) |
+                          (report_in_.buttonTouchpad << 1) |
+                          (report_counter_ << 2);
+    report_0x11_.data[8] = sys_buttons;
+
+    report_0x11_.data[9]  = report_in_.leftTrigger;
+    report_0x11_.data[10] = report_in_.rightTrigger;
+    
+    // Timestamp
+    static uint16_t timestamp = 0;
+    timestamp += 188;
+    report_0x11_.data[11] = timestamp & 0xFF;
+    report_0x11_.data[12] = (timestamp >> 8) & 0xFF;
+    
+    // Batería y sensores (valores estáticos)
+    report_0x11_.data[13] = 0x00; // Battery
+    report_0x11_.data[14] = 0x00; // Gyro X L
+    report_0x11_.data[15] = 0x00; // Gyro X H
+    report_0x11_.data[16] = 0x00; // Gyro Y L
+    report_0x11_.data[17] = 0x00; // Gyro Y H
+    report_0x11_.data[18] = 0x00; // Gyro Z L
+    report_0x11_.data[19] = 0x20; // Gyro Z H
+    report_0x11_.data[20] = 0x00; // Accel X L
+    report_0x11_.data[21] = 0x00; // Accel X H
+    report_0x11_.data[22] = 0x00; // Accel Y L
+    report_0x11_.data[23] = 0x00; // Accel Y H
+    report_0x11_.data[24] = 0x00; // Accel Z L
+    report_0x11_.data[25] = 0x40; // Accel Z H
+
+    // Calcular CRC32
+    uint8_t crc_buffer[79];
     crc_buffer[0] = 0xA1;
-    std::memcpy(&crc_buffer[1], &report_0x11_, 74);
+    std::memcpy(&crc_buffer[1], &report_0x11_, 78);
+    
     uint32_t final_crc = calculate_ds4_crc32(crc_buffer, 75);
-    std::memcpy(&report_0x11_.data[73], &final_crc, 4);
+    
+    // Escribir CRC (Little Endian)
+    report_0x11_.data[73] = final_crc & 0xFF;
+    report_0x11_.data[74] = (final_crc >> 8) & 0xFF;
+    report_0x11_.data[75] = (final_crc >> 16) & 0xFF;
+    report_0x11_.data[76] = (final_crc >> 24) & 0xFF;
 
     if (tud_suspended())
     {
         tud_remote_wakeup();
     }
 
-    // ============ ENVIAR REPORT 0x01 (64 BYTES) PARA WINDOWS Y JUEGOS NORMALES ============
+    // ============ ENVIAR REPORT 0x11 (78 BYTES CON CRC32) ============
     if (tud_hid_ready())
     {
         tud_hid_report(
             0, 
-            reinterpret_cast<uint8_t*>(&report_in_),
-            sizeof(PS4Dev::InReport)  // 64 bytes
+            reinterpret_cast<uint8_t*>(&report_0x11_),
+            sizeof(PS4Dev::InReport0x11) 
         );
     }
-    // =======================================================================================
+    // ==================================================================
 }
 
 // --------------------------------------------------------------------------------
@@ -385,17 +445,14 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
     
     if (report_type == HID_REPORT_TYPE_INPUT)
     {
-        // ============ WARZONE PIDE REPORT 0x11 (78 BYTES CON CRC32) ============
         if (report_id == 0x11)
         {
-            printf("[PS4] -> Enviando Report 0x11 (Extended con CRC32)\n");
+            printf("[PS4] -> Enviando Report 0x11 (Extended)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport0x11));
             std::memcpy(buffer, &report_0x11_, len);
             return len;
         }
-        // ========================================================================
         
-        // Report 0x01 normal
         uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
         std::memcpy(buffer, &report_in_, len);
         return len;
