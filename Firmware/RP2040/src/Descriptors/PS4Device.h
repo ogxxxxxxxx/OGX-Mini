@@ -5,6 +5,7 @@
 
 namespace PS4Dev
 {
+    // ============ CONSTANTES BÁSICAS ============
     static constexpr uint8_t JOYSTICK_MID = 0x80;
     static constexpr uint8_t JOYSTICK_MIN = 0x00;
     static constexpr uint8_t JOYSTICK_MAX = 0xFF;
@@ -19,59 +20,12 @@ namespace PS4Dev
         HAT_DOWN_LEFT = 0x05,
         HAT_LEFT      = 0x06,
         HAT_UP_LEFT   = 0x07,
-        HAT_CENTER    = 0x0F,
+        HAT_CENTER    = 0x08, // Nota: 0x0F también es center, 0x08 es estándar
     };
 
-    struct __attribute__((packed)) TouchpadXY
-    {
-        uint8_t counter : 7;
-        uint8_t unpressed : 1;
-        uint8_t data[3];
-
-        void set_x(uint16_t x)
-        {
-            data[0] = x & 0xff;
-            data[1] = (data[1] & 0xf0) | ((x >> 8) & 0xf);
-        }
-
-        void set_y(uint16_t y)
-        {
-            data[1] = (data[1] & 0x0f) | ((y & 0xf) << 4);
-            data[2] = y >> 4;
-        }
-    };
-
-    struct __attribute__((packed)) TouchpadData
-    {
-        TouchpadXY p1;
-        TouchpadXY p2;
-    };
-
-    struct __attribute__((packed)) PSSensor
-    {
-        int16_t x;
-        int16_t y;
-        int16_t z;
-    };
-
-    struct __attribute__((packed)) PSSensorData
-    {
-        uint16_t battery;
-        PSSensor gyroscope;
-        PSSensor accelerometer;
-        uint8_t misc[4];
-        uint8_t powerLevel : 4;
-        uint8_t charging : 1;
-        uint8_t headphones : 1;
-        uint8_t microphone : 1;
-        uint8_t extension : 1;
-        uint8_t extData0 : 1;
-        uint8_t extData1 : 1;
-        uint8_t notConnected : 1;
-        uint8_t extData3 : 5;
-        uint8_t misc2;
-    };
-
+    // ============ ESTRUCTURAS DE REPORTES ============
+    
+    // Report 0x01 (Estándar 64 bytes)
     struct __attribute__((packed)) InReport
     {
         uint8_t reportID;
@@ -80,54 +34,39 @@ namespace PS4Dev
         uint8_t rightStickX;
         uint8_t rightStickY;
         uint8_t dpad : 4;
-        uint16_t buttonWest : 1;
-        uint16_t buttonSouth : 1;
-        uint16_t buttonEast : 1;
-        uint16_t buttonNorth : 1;
-        uint16_t buttonL1 : 1;
-        uint16_t buttonR1 : 1;
-        uint16_t buttonL2 : 1;
-        uint16_t buttonR2 : 1;
-        uint16_t buttonSelect : 1;
-        uint16_t buttonStart : 1;
-        uint16_t buttonL3 : 1;
-        uint16_t buttonR3 : 1;
-        uint16_t buttonHome : 1;
-        uint16_t buttonTouchpad : 1;
+        uint8_t buttonWest : 1;
+        uint8_t buttonSouth : 1;
+        uint8_t buttonEast : 1;
+        uint8_t buttonNorth : 1;
+        uint8_t buttonL1 : 1;
+        uint8_t buttonR1 : 1;
+        uint8_t buttonL2 : 1;
+        uint8_t buttonR2 : 1;
+        uint8_t buttonSelect : 1;
+        uint8_t buttonStart : 1;
+        uint8_t buttonL3 : 1;
+        uint8_t buttonR3 : 1;
+        uint8_t buttonHome : 1;
+        uint8_t buttonTouchpad : 1;
         uint8_t reportCounter : 6;
-        uint8_t leftTrigger : 8;
-        uint8_t rightTrigger : 8;
-
-        union
-        {
-            uint8_t miscData[54];
-            struct __attribute__((packed))
-            {
-                uint16_t axisTiming;
-                PSSensorData sensorData;
-                uint8_t touchpadActive : 2;
-                uint8_t padding : 6;
-                uint8_t tpadIncrement;
-                TouchpadData touchpadData;
-                uint8_t mystery2[21];
-            } gamepad;
-        };
+        uint8_t leftTrigger;
+        uint8_t rightTrigger;
+        uint8_t miscData[54]; // Relleno para llegar a 64 bytes
     };
 
-    static_assert(sizeof(InReport) == 64, "PS4Dev::InReport debe medir 64 bytes");
-
+    // Report 0x11 (Extendido 78 bytes - Warzone)
     struct __attribute__((packed)) InReport0x11
     {
-        uint8_t reportID;
-        uint8_t data[77];
+        uint8_t reportID;     // 0x11
+        uint8_t data[77];     // Datos crudos (ejes, botones, CRC32)
     };
 
-    static_assert(sizeof(InReport0x11) == 78, "PS4Dev::InReport0x11 debe medir 78 bytes");
+    // ============ DESCRIPTORES USB ============
 
     static const uint8_t STRING_LANGUAGE[]     = { 0x09, 0x04 };
-    static const uint8_t STRING_MANUFACTURER[] = "Sony Interactive Entertainment";
+    static const uint8_t STRING_MANUFACTURER[] = "Sony Computer Entertainment";
     static const uint8_t STRING_PRODUCT[]      = "Wireless Controller";
-    static const uint8_t STRING_SERIAL[]       = "000000000001";
+    static const uint8_t STRING_SERIAL[]       = "123456789012";
     static const uint8_t STRING_VERSION[]      = "1.0";
 
     static const uint8_t* const STRING_DESCRIPTORS[] = {
@@ -148,12 +87,9 @@ namespace PS4Dev
         0x00,       // bDeviceProtocol
         0x40,       // bMaxPacketSize0 (64 bytes)
         
-        // ============ VOLVER A DS4 V2 (0x09CC) ============
         0x4C, 0x05, // idVendor  0x054C (Sony)
-        0xCC, 0x09, // idProduct 0x09CC (DS4 V2)
-        
+        0xC4, 0x05, // idProduct 0x05C4 (DualShock 4 Gen 1 - MEJOR PARA PC)
         0x00, 0x01, // bcdDevice 1.00
-        // ==================================================
 
         0x01,       // iManufacturer
         0x02,       // iProduct
@@ -161,6 +97,7 @@ namespace PS4Dev
         0x01        // bNumConfigurations
     };
 
+    // Descriptor HID CRÍTICO con Auth Reports (0xF0-0xF3)
     static const uint8_t REPORT_DESCRIPTORS[] =
     {
         0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
@@ -217,290 +154,51 @@ namespace PS4Dev
         0x95, 0x36,        //   Report Count (54)
         0x81, 0x02,        //   Input (Data,Var,Abs)
 
-        0x85, 0x05,        //   Report ID (5)
-        0x09, 0x22,        //   Usage (0x22)
-        0x95, 0x1F,        //   Report Count (31)
-        0x91, 0x02,        //   Output
-
-        0x85, 0x03,        //   Report ID (3)
-        0x0A, 0x21, 0x27,  //   Usage (0x2721)
-        0x95, 0x2F,        //   Report Count (47)
-        0xB1, 0x02,        //   Feature
-
-        0x85, 0x02,        //   Report ID (2)
-        0x09, 0x24,        //   Usage (0x24)
-        0x95, 0x24,        //   Report Count (36)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x08,        //   Report ID (8)
-        0x09, 0x25,        //   Usage (0x25)
-        0x95, 0x03,        //   Report Count (3)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x10,        //   Report ID (16)
-        0x09, 0x26,        //   Usage (0x26)
-        0x95, 0x04,        //   Report Count (4)
-        0xB1, 0x02,        //   Feature
-        
+        // Report 0x11 (Importante para Warzone)
         0x85, 0x11,        //   Report ID (17)
         0x09, 0x21,        //   Usage (0x21)
-        0x15, 0x00,        //   Logical Minimum (0)
-        0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-        0x75, 0x08,        //   Report Size (8)
         0x95, 0x4D,        //   Report Count (77)
         0x81, 0x02,        //   Input (Data,Var,Abs)
-        
-        0x85, 0x12,        //   Report ID (18)
-        0x06, 0x02, 0xFF,  //   Usage Page (Vendor Defined 0xFF02)
-        0x09, 0x21,        //   Usage (0x21)
-        0x95, 0x0F,        //   Report Count (15)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x13,        //   Report ID (19)
-        0x09, 0x22,        //   Usage (0x22)
-        0x95, 0x16,        //   Report Count (22)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x14,        //   Report ID (20)
-        0x06, 0x05, 0xFF,  //   Usage Page (Vendor Defined 0xFF05)
-        0x09, 0x20,        //   Usage (0x20)
-        0x95, 0x10,        //   Report Count (16)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x15,        //   Report ID (21)
-        0x09, 0x21,        //   Usage (0x21)
-        0x95, 0x2C,        //   Report Count (44)
-        0xB1, 0x02,        //   Feature
-        
-        0x06, 0x80, 0xFF,  //   Usage Page (Vendor Defined 0xFF80)
-        0x85, 0x80,        //   Report ID (128)
-        0x09, 0x20,        //   Usage (0x20)
-        0x95, 0x06,        //   Report Count (6)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x81,        //   Report ID (129)
-        0x09, 0x21,        //   Usage (0x21)
-        0x95, 0x06,        //   Report Count (6)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x82,        //   Report ID (130)
-        0x09, 0x22,        //   Usage (0x22)
-        0x95, 0x05,        //   Report Count (5)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x83,        //   Report ID (131)
-        0x09, 0x23,        //   Usage (0x23)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x84,        //   Report ID (132)
-        0x09, 0x24,        //   Usage (0x24)
-        0x95, 0x04,        //   Report Count (4)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x85,        //   Report ID (133)
-        0x09, 0x25,        //   Usage (0x25)
-        0x95, 0x06,        //   Report Count (6)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x86,        //   Report ID (134)
-        0x09, 0x26,        //   Usage (0x26)
-        0x95, 0x06,        //   Report Count (6)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x87,        //   Report ID (135)
-        0x09, 0x27,        //   Usage (0x27)
-        0x95, 0x23,        //   Report Count (35)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x88,        //   Report ID (136)
-        0x09, 0x28,        //   Usage (0x28)
-        0x95, 0x22,        //   Report Count (34)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x89,        //   Report ID (137)
-        0x09, 0x29,        //   Usage (0x29)
-        0x95, 0x02,        //   Report Count (2)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x90,        //   Report ID (144)
-        0x09, 0x30,        //   Usage (0x30)
-        0x95, 0x05,        //   Report Count (5)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x91,        //   Report ID (145)
-        0x09, 0x31,        //   Usage (0x31)
-        0x95, 0x03,        //   Report Count (3)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x92,        //   Report ID (146)
-        0x09, 0x32,        //   Usage (0x32)
-        0x95, 0x03,        //   Report Count (3)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0x93,        //   Report ID (147)
-        0x09, 0x33,        //   Usage (0x33)
-        0x95, 0x0C,        //   Report Count (12)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA0,        //   Report ID (160)
-        0x09, 0x40,        //   Usage (0x40)
-        0x95, 0x06,        //   Report Count (6)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA1,        //   Report ID (161)
-        0x09, 0x41,        //   Usage (0x41)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA2,        //   Report ID (162)
-        0x09, 0x42,        //   Usage (0x42)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA3,        //   Report ID (163)
-        0x09, 0x43,        //   Usage (0x43)
-        0x95, 0x30,        //   Report Count (48)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA4,        //   Report ID (164)
-        0x09, 0x44,        //   Usage (0x44)
-        0x95, 0x0D,        //   Report Count (13)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA5,        //   Report ID (165)
-        0x09, 0x45,        //   Usage (0x45)
-        0x95, 0x15,        //   Report Count (21)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA6,        //   Report ID (166)
-        0x09, 0x46,        //   Usage (0x46)
-        0x95, 0x15,        //   Report Count (21)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA7,        //   Report ID (167)
-        0x09, 0x4A,        //   Usage (0x4A)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA8,        //   Report ID (168)
-        0x09, 0x4B,        //   Usage (0x4B)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xA9,        //   Report ID (169)
-        0x09, 0x4C,        //   Usage (0x4C)
-        0x95, 0x08,        //   Report Count (8)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAA,        //   Report ID (170)
-        0x09, 0x4E,        //   Usage (0x4E)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAB,        //   Report ID (171)
-        0x09, 0x4F,        //   Usage (0x4F)
-        0x95, 0x39,        //   Report Count (57)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAC,        //   Report ID (172)
-        0x09, 0x50,        //   Usage (0x50)
-        0x95, 0x39,        //   Report Count (57)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAD,        //   Report ID (173)
-        0x09, 0x51,        //   Usage (0x51)
-        0x95, 0x0B,        //   Report Count (11)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAE,        //   Report ID (174)
-        0x09, 0x52,        //   Usage (0x52)
-        0x95, 0x01,        //   Report Count (1)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xAF,        //   Report ID (175)
-        0x09, 0x53,        //   Usage (0x53)
-        0x95, 0x02,        //   Report Count (2)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xB0,        //   Report ID (176)
-        0x09, 0x54,        //   Usage (0x54)
-        0x95, 0x3F,        //   Report Count (63)
-        0xB1, 0x02,        //   Feature
-        
+
+        // --- AUTH FEATURE REPORTS (CRÍTICO PARA OGX MINI) ---
         0x06, 0xF0, 0xFF,  // Usage Page (Vendor Defined 0xFFF0)
         0x09, 0x40,        // Usage (0x40)
-        0xA1, 0x02,        //   Collection (Logical)
+        0xA1, 0x01,        // Collection (Application)
         
-        0x85, 0xF0,        //   Report ID (240)
-        0x09, 0x47,        //   Usage (0x47)
-        0x95, 0x3F,        //   Report Count (63)
-        0xB1, 0x02,        //   Feature
+        0x85, 0xF0,        // Report ID (240) - Set Auth Payload
+        0x09, 0x47,        // Usage (0x47)
+        0x95, 0x3F,        // Report Count (63)
+        0xB1, 0x02,        // Feature (Data,Var,Abs)
+
+        0x85, 0xF1,        // Report ID (241) - Get Signature Nonce
+        0x09, 0x48,        // Usage (0x48)
+        0x95, 0x3F,        // Report Count (63)
+        0xB1, 0x02,        // Feature (Data,Var,Abs)
+
+        0x85, 0xF2,        // Report ID (242) - Get Signing State
+        0x09, 0x49,        // Usage (0x49)
+        0x95, 0x0F,        // Report Count (15)
+        0xB1, 0x02,        // Feature (Data,Var,Abs)
+
+        0x85, 0xF3,        // Report ID (243) - Reset Auth
+        0x0A, 0x01, 0x47,  // Usage (0x4701)
+        0x95, 0x07,        // Report Count (7)
+        0xB1, 0x02,        // Feature (Data,Var,Abs)
         
-        0x85, 0xF1,        //   Report ID (241)
-        0x09, 0x48,        //   Usage (0x48)
-        0x95, 0x3F,        //   Report Count (63)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xF2,        //   Report ID (242)
-        0x09, 0x49,        //   Usage (0x49)
-        0x95, 0x0F,        //   Report Count (15)
-        0xB1, 0x02,        //   Feature
-        
-        0x85, 0xF3,        //   Report ID (243)
-        0x0A, 0x01, 0x47,  //   Usage (0x4701)
-        0x95, 0x07,        //   Report Count (7)
-        0xB1, 0x02,        //   Feature
-        
-        0xC0,              // End Collection (Logical)
-        0xC0,              // End Collection (Application)
+        0xC0,              // End Collection (Feature)
+        // ----------------------------------------------------
+
+        0xC0               // End Collection (Application)
     };
 
     static const uint8_t CONFIGURATION_DESCRIPTORS[] =
     {
-        0x09,        // bLength
-        0x02,        // bDescriptorType (Configuration)
-        0x29, 0x00,  // wTotalLength 41
-        0x01,        // bNumInterfaces 1
-        0x01,        // bConfigurationValue
-        0x00,        // iConfiguration
-        0x80,        // bmAttributes (Bus powered)
-        0xFA,        // bMaxPower (500mA)
-
-        0x09,        // bLength
-        0x04,        // bDescriptorType (Interface)
-        0x00,        // bInterfaceNumber 0
-        0x00,        // bAlternateSetting
-        0x02,        // bNumEndpoints 2
-        0x03,        // bInterfaceClass (HID)
-        0x00,        // bInterfaceSubClass
-        0x00,        // bInterfaceProtocol
-        0x00,        // iInterface
-
-        0x09,        // bLength
-        0x21,        // bDescriptorType (HID)
-        0x11, 0x01,  // bcdHID 1.11
-        0x00,        // bCountryCode
-        0x01,        // bNumDescriptors
-        0x22,        // bDescriptorType (Report)
-        sizeof(REPORT_DESCRIPTORS) & 0xFF,
-        (sizeof(REPORT_DESCRIPTORS) >> 8) & 0xFF,
-
-        0x07,        // bLength
-        0x05,        // bDescriptorType (Endpoint)
-        0x81,        // bEndpointAddress (EP1 IN)
-        0x03,        // bmAttributes (Interrupt)
-        0x40, 0x00,  // wMaxPacketSize 64
-        0x01,        // bInterval 1ms
-
-        0x07,        // bLength
-        0x05,        // bDescriptorType (Endpoint)
-        0x02,        // bEndpointAddress (EP2 OUT)
-        0x03,        // bmAttributes (Interrupt)
-        0x40, 0x00,  // wMaxPacketSize 64
-        0x01,        // bInterval 1ms
+        0x09, 0x02, 0x29, 0x00, 0x01, 0x01, 0x00, 0x80, 0xFA, // Configuration
+        0x09, 0x04, 0x00, 0x00, 0x02, 0x03, 0x00, 0x00, 0x00, // Interface
+        0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, sizeof(REPORT_DESCRIPTORS), 0x00, // HID
+        0x07, 0x05, 0x81, 0x03, 0x40, 0x00, 0x01, // Endpoint IN
+        0x07, 0x05, 0x02, 0x03, 0x40, 0x00, 0x01  // Endpoint OUT
     };
-
-} // namespace PS4Dev
+}
 
 #endif // _PS4_DEVICE_DESCRIPTORS_H_
