@@ -26,6 +26,9 @@ set(BTSTACK_ROOT ${BLUEPAD32_ROOT}/external/btstack)
 set(PICO_BTSTACK_PATH ${BTSTACK_ROOT})
 set(LIBFIXMATH_PATH ${EXTERNAL_DIR}/libfixmath)
 
+# Usamos mbedtls integrado en el Pico SDK
+set(MBEDTLS_PATH ${PICO_SDK_PATH}/lib/mbedtls)
+
 #get_pico_sdk(${EXTERNAL_DIR} ${PICOSDK_VERSION_TAG})
 init_git_submodules(${EXTERNAL_DIR}
     ${BLUEPAD32_ROOT}
@@ -33,7 +36,7 @@ init_git_submodules(${EXTERNAL_DIR}
 )
 apply_lib_patches(${EXTERNAL_DIR})
 
-set(SOURCES_BOARD
+set(SOURCES_BOARD 
     ${SRC}/main.cpp
 
     ${SRC}/OGXMini/OGXMini.cpp
@@ -52,7 +55,7 @@ set(SOURCES_BOARD
     ${SRC}/Board/board_api_private/board_api_rgb.cpp
     ${SRC}/Board/board_api_private/board_api_bt.cpp
     ${SRC}/Board/board_api_private/board_api_usbh.cpp
-
+    
     ${SRC}/UserSettings/UserSettings.cpp
     ${SRC}/UserSettings/UserProfile.cpp
     ${SRC}/UserSettings/JoystickSettings.cpp
@@ -75,7 +78,6 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/XboxOG/tud_xid/tud_xid.cpp
 )
 
-# Nota: mbedtls/mbedcrypto se agregan a LIBS_BOARD más abajo (después de pico_sdk_init)
 set(LIBS_BOARD
     # Base
     pico_stdlib
@@ -91,11 +93,17 @@ set(LIBS_BOARD
     hardware_irq
     #fix16
     libfixmath
+    # Crypto para PS4
+    mbedtls
+    mbedcrypto
 )
 
-set(INC_DIRS_BOARD)
+set(INC_DIRS_BOARD
+    ${MBEDTLS_PATH}/include
+)
 
 # Config options
+
 set(MAX_GAMEPADS 1 CACHE STRING "Set number of gamepads, 1 to 4")
 if (MAX_GAMEPADS GREATER 4 OR MAX_GAMEPADS LESS 1)
     message(FATAL_ERROR "MAX_GAMEPADS must be between 1 and 4")
@@ -139,6 +147,10 @@ elseif(OGXM_BOARD STREQUAL "RP2040_ZERO")
     set(EN_USB_HOST TRUE)
     set(EN_RGB TRUE)
 
+# elseif(OGXM_BOARD STREQUAL "INTERNAL_4CH")
+#     set(EN_USB_HOST TRUE)
+#     set(EN_4CH TRUE)
+
 elseif(OGXM_BOARD STREQUAL "EXTERNAL_4CH_I2C")
     add_compile_definitions(CONFIG_OGXM_BOARD_EXTERNAL_4CH=1)
     set(EN_USB_HOST TRUE)
@@ -168,6 +180,7 @@ elseif(OGXM_BOARD STREQUAL "ESP32_BLUERETRO_I2C")
 
 else()
     message(FATAL_ERROR "Invalid OGXM_BOARD value. See options in src/board_config.h")
+
 endif()
 
 add_definitions(-DOGXM_BOARD=${OGXM_BOARD})
@@ -212,7 +225,7 @@ if(EN_BLUETOOTH)
     message(STATUS "Bluetooth enabled.")
 
     generate_gatt_header(${BTSTACK_ROOT} ${SRC}/BLEServer/att_delayed_response.gatt ${SRC}/BLEServer/att_delayed_response.h)
-
+    
     list(APPEND SOURCES_BOARD
         ${SRC}/Bluepad32/Bluepad32.cpp
         ${SRC}/BLEServer/BLEServer.cpp
@@ -244,6 +257,10 @@ endif()
 if(EN_4CH)
     add_compile_definitions(CONFIG_EN_4CH=1)
     message(STATUS "4CH enabled.")
+    # list(APPEND SOURCES_BOARD
+    #     ${SRC}/I2CDriver/4Channel/I2CMaster.cpp
+    #     ${SRC}/I2CDriver/4Channel/I2CSlave.cpp
+    # )
     list(APPEND LIBS_BOARD
         hardware_i2c
         pico_i2c_slave
@@ -281,6 +298,7 @@ add_compile_definitions(FIRMWARE_VERSION="${FW_VERSION}")
 add_compile_definitions(PICO_FLASH_SIZE_BYTES=${FLASH_SIZE_MB}*1024*1024)
 add_compile_definitions(NVS_SECTORS=4)
 
+# Check for DVD dongle firmware
 if(EXISTS ${SRC}/USBDevice/DeviceDriver/XboxOG/tud_xid/tud_xid_xremote_rom.h)
     message(STATUS "XRemote ROM available.")
     add_definitions(-DXREMOTE_ROM_AVAILABLE)
@@ -296,34 +314,6 @@ include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
 project(${FW_NAME} C CXX ASM)
 
 pico_sdk_init()
-
-# ---------------------------------------------------------------------------
-# MBEDTLS (Pico SDK) + config embedded propio
-# ---------------------------------------------------------------------------
-set(MBEDTLS_PATH ${PICO_SDK_PATH}/lib/mbedtls)
-
-if(NOT EXISTS ${MBEDTLS_PATH}/CMakeLists.txt)
-    message(FATAL_ERROR "mbedtls not found at ${MBEDTLS_PATH}. Check PICO_SDK_PATH.")
-endif()
-
-# Usar nuestro config embedded (desactiva entropy/timing/havege)
-# OJO: debe ser un string con comillas para que mbedTLS lo incluya.
-set(OGXM_MBEDTLS_CONFIG_FILE "mbedtls_config_ogxmini_rp2040.h")
-
-# Asegurar que mbedTLS encuentre ese header
-list(APPEND INC_DIRS_BOARD
-    ${CMAKE_CURRENT_LIST_DIR}/config
-    ${MBEDTLS_PATH}/include
-)
-
-# Pasar el nombre del archivo de config a la compilación de mbedTLS
-add_compile_definitions(MBEDTLS_CONFIG_FILE="${OGXM_MBEDTLS_CONFIG_FILE}")
-
-# Librerías mbedtls a linkear (Crypto para PS4)
-list(APPEND LIBS_BOARD
-    mbedtls
-    mbedcrypto
-)
 
 add_executable(${FW_NAME} ${SOURCES_BOARD})
 
@@ -352,40 +342,42 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         PICO_DEFAULT_UART_TX_PIN=${TX_PIN}
         PICO_DEFAULT_UART_RX_PIN=${RX_PIN}
     )
-
+ 
     add_compile_definitions(CFG_TUSB_DEBUG=1)
     add_compile_definitions(OGXM_DEBUG=1)
 
     target_compile_options(${FW_NAME} PRIVATE
-        -Wall
-        -Wextra
-        -Wconversion
-        -Wsign-conversion
-        -Wno-unused-parameter
+        -Wall                # Enable most warnings
+        -Wextra              # Enable extra warnings
+        -Wconversion         # Warn on type conversion issues
+        -Wsign-conversion    # Warn on sign conversion issues
+        -Wno-unused-parameter # Disable warnings for unused parameters
+        # -Werror              # Treat warnings as errors
     )
 
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     pico_enable_stdio_uart(${FW_NAME} 0)
     add_compile_definitions(CFG_TUSB_DEBUG=0)
     add_compile_options(
-        -O3
-        -mthumb
-        -ffunction-sections
-        -fdata-sections
-        -fomit-frame-pointer
-        -finline-functions
+        -O3                     # Optimize for speed
+        # -mcpu=cortex-m0plus     # Target ARM Cortex-M0+
+        -mthumb                 # Use Thumb instruction set
+        -ffunction-sections     # Place each function in its own section
+        -fdata-sections         # Place each data item in its own section
+        -fomit-frame-pointer    # Omit frame pointers
+        -finline-functions      # Enable inlining
     )
 
     add_link_options(
-        -Wl,--gc-sections
-        -flto
+        -Wl,--gc-sections       # Remove unused sections
+        -flto                   # Link-Time Optimization
     )
 endif()
 
 pico_set_program_name(${FW_NAME} ${FW_NAME})
 pico_set_program_version(${FW_NAME} ${FW_VERSION})
 
-target_include_directories(${FW_NAME} PRIVATE
+target_include_directories(${FW_NAME} PRIVATE 
     ${SRC}
 )
 
@@ -405,9 +397,16 @@ endif()
 
 add_subdirectory(${LIBFIXMATH_PATH} libfixmath)
 
-# --- COMPILACIÓN MBEDTLS ---
+# --- INSTRUCCIONES DE COMPILACIÓN MBEDTLS DEFINITIVAS ---
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+
+# Forzamos la desactivación de módulos que fallan en Bare Metal (RP2040)
+add_definitions(-DMBEDTLS_NO_PLATFORM_ENTROPY)
+add_definitions(-DMBEDTLS_TIMING_C=0)
+add_definitions(-DMBEDTLS_HAVE_TIME=0)
+add_definitions(-DMBEDTLS_FS_IO=0)
+
 add_subdirectory(${MBEDTLS_PATH} mbedtls)
 
 target_link_libraries(${FW_NAME} PRIVATE ${LIBS_BOARD})
@@ -418,6 +417,8 @@ target_compile_definitions(libfixmath PRIVATE
     FIXMATH_NO_CACHE
     FIXMATH_NO_HARD_DIVISION
     FIXMATH_NO_OVERFLOW
+    # FIXMATH_NO_ROUNDING
+    # FIXMATH_OPTIMIZE_8BIT
 )
 
 if(OGXM_RETAIL STREQUAL "TRUE")
