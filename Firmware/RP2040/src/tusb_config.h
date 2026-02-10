@@ -110,8 +110,12 @@
 #define CFG_TUD_XID     1
 #define CFG_TUD_XINPUT  1
 
+// ============ CRÍTICO PARA WARZONE: BUFFER DE 256 BYTES ============
 // HID buffer size Should be sufficient to hold ID (if any) + Data
-#define CFG_TUD_HID_EP_BUFSIZE 64
+// AUMENTADO DE 64 A 256 PARA SOPORTAR REPORT 0x11 (78 BYTES)
+#define CFG_TUD_HID_EP_BUFSIZE 256
+// ====================================================================
+
 #define CFG_TUD_CDC_EP_BUFSIZE 64
 
 #define CFG_TUD_CDC_TX_BUFSIZE  256
