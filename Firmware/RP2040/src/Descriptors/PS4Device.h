@@ -9,7 +9,6 @@ namespace PS4Dev
     static constexpr uint8_t JOYSTICK_MIN = 0x00;
     static constexpr uint8_t JOYSTICK_MAX = 0xFF;
 
-    // Valores de HAT (dpad) como en GP2040-CE
     enum Hat : uint8_t
     {
         HAT_UP        = 0x00,
@@ -73,6 +72,7 @@ namespace PS4Dev
         uint8_t misc2;
     };
 
+    // ====== REPORTE PRINCIPAL 0x01 (64 bytes) ======
     struct __attribute__((packed)) InReport
     {
         uint8_t reportID;
@@ -117,6 +117,15 @@ namespace PS4Dev
 
     static_assert(sizeof(InReport) == 64, "PS4Dev::InReport debe medir 64 bytes");
 
+    // ====== REPORTE 0x11 (78 bytes) - REQUERIDO POR WARZONE ======
+    struct __attribute__((packed)) InReport0x11
+    {
+        uint8_t reportID;           // 0x11
+        uint8_t data[77];           // 77 bytes de datos
+    };
+
+    static_assert(sizeof(InReport0x11) == 78, "PS4Dev::InReport0x11 debe medir 78 bytes");
+
     static const uint8_t STRING_LANGUAGE[]     = { 0x09, 0x04 };
     static const uint8_t STRING_MANUFACTURER[] = "Sony Interactive Entertainment";
     static const uint8_t STRING_PRODUCT[]      = "Wireless Controller";
@@ -124,11 +133,11 @@ namespace PS4Dev
     static const uint8_t STRING_VERSION[]      = "1.0";
 
     static const uint8_t* const STRING_DESCRIPTORS[] = {
-        STRING_LANGUAGE,     // Index 0
-        STRING_MANUFACTURER, // Index 1
-        STRING_PRODUCT,      // Index 2
-        STRING_SERIAL,       // Index 3 ← CRÍTICO
-        STRING_VERSION       // Index 4
+        STRING_LANGUAGE,
+        STRING_MANUFACTURER,
+        STRING_PRODUCT,
+        STRING_SERIAL,
+        STRING_VERSION
     };
 
     static const uint8_t DEVICE_DESCRIPTORS[] =
@@ -141,16 +150,14 @@ namespace PS4Dev
         0x00,       // bDeviceProtocol
         0x40,       // bMaxPacketSize0 (64 bytes)
         
-        0x4C, 0x05, // idVendor  0x054C (Sony Corporation)
-        0xCC, 0x09, // idProduct 0x09CC (DualShock 4 Gen 2)
+        0x4C, 0x05, // idVendor  0x054C
+        0xCC, 0x09, // idProduct 0x09CC
 
-        // ============ CAMBIO #1: VERSIÓN DEL FIRMWARE ============
-        0x10, 0x03, // bcdDevice 3.10 (Versión real de DS4 v2)
-        // =========================================================
+        0x10, 0x03, // bcdDevice 3.10 ← CRÍTICO
 
-        0x01,       // iManufacturer (índice 1)
-        0x02,       // iProduct (índice 2)
-        0x03,       // iSerialNumber (índice 3)
+        0x01,       // iManufacturer
+        0x02,       // iProduct
+        0x03,       // iSerialNumber
         0x01        // bNumConfigurations
     };
 
@@ -210,7 +217,6 @@ namespace PS4Dev
         0x95, 0x36,        //   Report Count (54)
         0x81, 0x02,        //   Input (Data,Var,Abs)
 
-        // Feature Reports
         0x85, 0x05,        //   Report ID (5)
         0x09, 0x22,        //   Usage (0x22)
         0x95, 0x1F,        //   Report Count (31)
@@ -236,15 +242,15 @@ namespace PS4Dev
         0x95, 0x04,        //   Report Count (4)
         0xB1, 0x02,        //   Feature
         
-        // ============ CAMBIO #2: REPORTE 0x11 CORREGIDO ============
-        0x85, 0x11,        //   Report ID (17) ← EL QUE WARZONE BUSCA
+        // ============ REPORTE 0x11 (CRÍTICO PARA WARZONE) ============
+        0x85, 0x11,        //   Report ID (17)
         0x09, 0x21,        //   Usage (0x21)
         0x15, 0x00,        //   Logical Minimum (0)
         0x26, 0xFF, 0x00,  //   Logical Maximum (255)
         0x75, 0x08,        //   Report Size (8)
-        0x95, 0x4D,        //   Report Count (77) ← CRÍTICO: 77 bytes + 1 ID = 78
-        0x81, 0x02,        //   Input (Data,Var,Abs) ← INPUT, no Feature
-        // ===========================================================
+        0x95, 0x4D,        //   Report Count (77)
+        0x81, 0x02,        //   Input (Data,Var,Abs)
+        // ==============================================================
         
         0x85, 0x12,        //   Report ID (18)
         0x06, 0x02, 0xFF,  //   Usage Page (Vendor Defined 0xFF02)
