@@ -32,7 +32,8 @@ public:
 
 private:
     PS4Dev::InReport report_in_;
-    uint8_t report_counter_;  // ← LÍNEA AGREGADA (CRÍTICA PARA WARZONE)
+    PS4Dev::InReport0x11 report_0x11_;  // ← AGREGADO PARA WARZONE
+    uint8_t report_counter_;
 };
 
 #endif // _PS4_DEVICE_H_
