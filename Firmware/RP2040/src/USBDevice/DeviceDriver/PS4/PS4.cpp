@@ -8,11 +8,12 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // --------------------------------------------------------------------------------
-// FEATURE REPORTS ESTÁTICOS (CRÍTICOS PARA WARZONE)
+// FEATURE REPORTS ESTÁTICOS (CON ID AL INICIO - CRÍTICO PARA WARZONE)
 // --------------------------------------------------------------------------------
 
-// Report 0x02: Calibración del controlador
+// Report 0x02: Calibración del controlador (37 bytes con ID incluido)
 static constexpr uint8_t output_0x02[] = {
+    0x02, // <--- ID REQUERIDO
     0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22,
     0x2a, 0xdd, 0xbb, 0x22, 0x5e, 0xdd, 0x81, 0x22, 
     0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
@@ -20,8 +21,9 @@ static constexpr uint8_t output_0x02[] = {
     0x83, 0xdf, 0x0c, 0x00
 };
 
-// Report 0xA3: Versión de firmware y fecha (CRÍTICO PARA WARZONE)
+// Report 0xA3: Versión de firmware y fecha (49 bytes con ID incluido)
 static constexpr uint8_t output_0xa3[] = {
+    0xa3, // <--- ID REQUERIDO
     0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32,  // "Jun  9 2"
     0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,  // "017"
     0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31,  // "12:36:41"
@@ -34,7 +36,6 @@ static constexpr uint8_t output_0xa3[] = {
 // HELPERS: MATEMÁTICAS Y CURVAS
 // --------------------------------------------------------------------------------
 
-// [CORRECCIÓN CRÍTICA] Mapeo de float [-1.0 ... 1.0] a byte [0 ... 255]
 static inline uint8_t map_signed_to_uint8(float signed_val)
 {
     if (signed_val >= 0.99f) return 255;
@@ -49,7 +50,6 @@ static inline uint8_t map_signed_to_uint8(float signed_val)
     return static_cast<uint8_t>(out);
 }
 
-// Función RADIAL para sticks analógicos
 static inline void apply_stick_steam_radial(int16_t in_x, int16_t in_y,
                                             float deadzone_fraction, float gamma, float sensitivity,
                                             uint8_t &out_x, uint8_t &out_y)
@@ -120,7 +120,7 @@ void PS4Device::initialize()
         .sof              = nullptr
     };
     
-    // CRÍTICO: Inicializar contador de reportes
+    // Inicializar contador de reportes
     report_counter_ = 0;
 }
 
@@ -128,7 +128,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 {
     (void)idx;
 
-    // ---- Variables estáticas para MACROS ----
+    // Variables estáticas para MACROS
     static bool     mutePrev          = false;
     static absolute_time_t muteEndTime; 
     static bool     muteActive        = false;
@@ -165,16 +165,13 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     if (muteActive && time_reached(muteEndTime)) muteActive = false;
     if (psActive && time_reached(psEndTime))     psActive = false;
 
-    // ----------------------------------------------------------------
-    // CONSTRUCCIÓN DEL REPORTE
-    // ----------------------------------------------------------------
+    // Construcción del reporte
     std::memset(&report_in_, 0, sizeof(report_in_));
     report_in_.reportID = 0x01;
 
-    // ============ FIX #3: INCREMENTAR CONTADOR (ANTI-BAN) ============
+    // Incrementar contador (anti-ban)
     report_counter_ = (report_counter_ + 1) & 0x3F; // 6 bits (0-63)
     report_in_.reportCounter = report_counter_;
-    // ==================================================================
 
     // Touchpad limpio
     report_in_.gamepad.touchpadActive = 0;
@@ -290,7 +287,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 }
 
 // --------------------------------------------------------------------------------
-// CALLBACKS - CON LOS 3 FIXES APLICADOS
+// CALLBACKS - VERSIÓN FINAL CORREGIDA
 // --------------------------------------------------------------------------------
 
 uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
@@ -299,7 +296,7 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
 {
     (void)itf;
     
-    // ============ FIX #1: RESPONDER AL REPORTE 0xA3 ============
+    // Feature Reports
     if (report_type == HID_REPORT_TYPE_FEATURE)
     {
         if (report_id == 0x02) // Calibración
@@ -308,14 +305,13 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
             std::memcpy(buffer, output_0x02, len);
             return len;
         }
-        else if (report_id == 0xA3) // Versión de firmware (CRÍTICO)
+        else if (report_id == 0xA3) // Versión de firmware
         {
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0xa3));
             std::memcpy(buffer, output_0xa3, len);
             return len;
         }
     }
-    // ===========================================================
     
     // Input Reports
     if (report_type == HID_REPORT_TYPE_INPUT)
@@ -342,16 +338,15 @@ bool PS4Device::vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
     return false;
 }
 
-// ============ FIX #2: CORREGIR ÍNDICE 0 DE STRINGS ============
 const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
     (void)langid;
     
-    // Index 0 es SIEMPRE la tabla de idiomas (no texto)
+    // Index 0 es la tabla de idiomas
     if (index == 0)
     {
         static uint16_t lang_descriptor[2];
-        lang_descriptor[0] = (0x03 << 8) | (2 * 1 + 2); // bLength + bDescriptorType
+        lang_descriptor[0] = (0x03 << 8) | (2 * 1 + 2);
         lang_descriptor[1] = 0x0409; // English (US)
         return lang_descriptor;
     }
@@ -360,7 +355,6 @@ const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index, uint16_t lang
     const char* value = reinterpret_cast<const char*>(PS4Dev::STRING_DESCRIPTORS[index]);
     return get_string_descriptor(value, index);
 }
-// ==============================================================
 
 const uint8_t* PS4Device::get_descriptor_device_cb()
 {
