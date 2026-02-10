@@ -150,10 +150,12 @@ namespace PS4Dev
         0x00,       // bDeviceProtocol
         0x40,       // bMaxPacketSize0 (64 bytes)
         
-        0x4C, 0x05, // idVendor  0x054C
-        0xCC, 0x09, // idProduct 0x09CC
-
-        0x10, 0x03, // bcdDevice 3.10 ← CRÍTICO
+        // ============ CAMBIO: DS4 V1 (0x05C4) EN VEZ DE V2 (0x09CC) ============
+        0x4C, 0x05, // idVendor  0x054C (Sony Corporation)
+        0xC4, 0x05, // idProduct 0x05C4 (DualShock 4 V1 - Más compatible)
+        
+        0x00, 0x01, // bcdDevice 1.00 (Versión simple, sin audio USB)
+        // ========================================================================
 
         0x01,       // iManufacturer
         0x02,       // iProduct
