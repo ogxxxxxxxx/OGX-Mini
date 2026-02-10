@@ -2,9 +2,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>  // ← AGREGAR ESTA LÍNEA PARA printf
+#include <cstdio>
 
-#include "pico/time.h" // make_timeout_time_ms, time_reached
+#include "pico/time.h"
 
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
@@ -14,7 +14,7 @@
 
 // Report 0x02: Calibración del controlador (37 bytes con ID incluido)
 static constexpr uint8_t output_0x02[] = {
-    0x02, // <--- ID REQUERIDO
+    0x02,
     0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22,
     0x2a, 0xdd, 0xbb, 0x22, 0x5e, 0xdd, 0x81, 0x22, 
     0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
@@ -24,7 +24,7 @@ static constexpr uint8_t output_0x02[] = {
 
 // Report 0x03: Definición del controlador (48 bytes con ID incluido)
 static constexpr uint8_t output_0x03[] = {
-    0x03, // <--- ID REQUERIDO
+    0x03,
     0x21, 0x27, 0x04, 0xcf, 0x00, 0x2c, 0x56,
     0x08, 0x00, 0x3d, 0x00, 0xe8, 0x03, 0x04, 0x00,
     0xff, 0x7f, 0x0d, 0x0d, 0x00, 0x00, 0x00, 0x00,
@@ -33,12 +33,19 @@ static constexpr uint8_t output_0x03[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+// Report 0x12: Estado de Audio/Batería (16 bytes con ID incluido) ← NUEVO
+static constexpr uint8_t output_0x12[] = {
+    0x12, // Report ID
+    0x00, 0x00, 0x82, 0x21, 0x11, 0x11, 0x00, 0x00, 
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
 // Report 0xA3: Versión de firmware y fecha (49 bytes con ID incluido)
 static constexpr uint8_t output_0xa3[] = {
-    0xa3, // <--- ID REQUERIDO
-    0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32,  // "Jun  9 2"
-    0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,  // "017"
-    0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31,  // "12:36:41"
+    0xa3,
+    0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32,
+    0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x01, 0x08, 0xb4, 0x01, 0x00, 0x00, 0x00,
     0x07, 0xa0, 0x10, 0x20, 0x00, 0xa0, 0x02, 0x00
@@ -132,7 +139,6 @@ void PS4Device::initialize()
         .sof              = nullptr
     };
     
-    // Inicializar contador de reportes
     report_counter_ = 0;
     
     printf("[PS4] Dispositivo inicializado\n");
@@ -142,7 +148,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 {
     (void)idx;
 
-    // Variables estáticas para MACROS
     static bool     mutePrev          = false;
     static absolute_time_t muteEndTime; 
     static bool     muteActive        = false;
@@ -160,7 +165,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     const bool psPressed    = (btn & Gamepad::BUTTON_SYS)  != 0; 
     const bool sharePressed = (btn & Gamepad::BUTTON_BACK) != 0;
 
-    // Lógica Macro MUTE
     if (mutePressed && !mutePrev)
     {
         muteActive = true;
@@ -168,7 +172,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     }
     mutePrev = mutePressed;
 
-    // Lógica Macro PS
     if (psPressed && !psPrev)
     {
         psActive = true;
@@ -179,20 +182,16 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     if (muteActive && time_reached(muteEndTime)) muteActive = false;
     if (psActive && time_reached(psEndTime))     psActive = false;
 
-    // Construcción del reporte
     std::memset(&report_in_, 0, sizeof(report_in_));
     report_in_.reportID = 0x01;
 
-    // Incrementar contador (anti-ban)
-    report_counter_ = (report_counter_ + 1) & 0x3F; // 6 bits (0-63)
+    report_counter_ = (report_counter_ + 1) & 0x3F;
     report_in_.reportCounter = report_counter_;
 
-    // Touchpad limpio
     report_in_.gamepad.touchpadActive = 0;
     report_in_.gamepad.touchpadData.p1.unpressed = 1;
     report_in_.gamepad.touchpadData.p2.unpressed = 1;
 
-    // Sticks analógicos
     constexpr float left_deadzone   = 0.03f; 
     constexpr float right_deadzone  = 0.02f; 
     constexpr float left_gamma      = 1.8f;
@@ -207,7 +206,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
                              right_deadzone, right_gamma, both_sensitivity,
                              report_in_.rightStickX, report_in_.rightStickY);
 
-    // D-PAD
     switch (gp_in.dpad)
     {
         case Gamepad::DPAD_UP:          report_in_.dpad = PS4Dev::HAT_UP;         break;
@@ -221,7 +219,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
         default:                        report_in_.dpad = PS4Dev::HAT_CENTER;     break;
     }
 
-    // Botones principales
     const bool baseSquare = (btn & Gamepad::BUTTON_X) != 0;
     const bool baseCircle = (btn & Gamepad::BUTTON_B) != 0;
 
@@ -230,7 +227,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.buttonSouth = (btn & Gamepad::BUTTON_A)  ? 1 : 0;
     report_in_.buttonNorth = (btn & Gamepad::BUTTON_Y)  ? 1 : 0;
 
-    // Triggers/Shoulders
     const bool physL1 = (btn & Gamepad::BUTTON_LB) != 0; 
     const bool physR1 = (btn & Gamepad::BUTTON_RB) != 0; 
     const bool physL2 = gp_in.trigger_l;
@@ -275,7 +271,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.leftTrigger  = trigL_val;
     report_in_.rightTrigger = trigR_val;
 
-    // Otros botones
     report_in_.buttonL3 = (btn & Gamepad::BUTTON_L3) ? 1 : 0;
     report_in_.buttonR3 = (btn & Gamepad::BUTTON_R3) ? 1 : 0;
 
@@ -284,7 +279,6 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.buttonHome     = psPressed ? 1 : 0;
     report_in_.buttonTouchpad = sharePressed ? 1 : 0;
 
-    // Enviar USB
     if (tud_suspended())
     {
         tud_remote_wakeup();
@@ -301,7 +295,7 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
 }
 
 // --------------------------------------------------------------------------------
-// CALLBACKS - CON LOGGING PARA DEBUG
+// CALLBACKS - CON REPORTE 0x12 AGREGADO
 // --------------------------------------------------------------------------------
 
 uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
@@ -310,7 +304,6 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
 {
     (void)itf;
     
-    // ============ LOGGING PARA DEBUG ============
     const char* type_name = "UNKNOWN";
     if (report_type == HID_REPORT_TYPE_INPUT) type_name = "INPUT";
     else if (report_type == HID_REPORT_TYPE_OUTPUT) type_name = "OUTPUT";
@@ -318,26 +311,33 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
     
     printf("[PS4] GET_REPORT: ID=0x%02X Type=%s Len=%d\n", 
            report_id, type_name, reqlen);
-    // ============================================
     
-    // Feature Reports
     if (report_type == HID_REPORT_TYPE_FEATURE)
     {
-        if (report_id == 0x02) // Calibración
+        if (report_id == 0x02)
         {
             printf("[PS4] -> Enviando Report 0x02 (Calibracion)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x02));
             std::memcpy(buffer, output_0x02, len);
             return len;
         }
-        else if (report_id == 0x03) // Definición del controlador
+        else if (report_id == 0x03)
         {
             printf("[PS4] -> Enviando Report 0x03 (Definicion)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x03));
             std::memcpy(buffer, output_0x03, len);
             return len;
         }
-        else if (report_id == 0xA3) // Versión de firmware
+        // ============ NUEVO: REPORTE 0x12 (CRÍTICO PARA WARZONE) ============
+        else if (report_id == 0x12)
+        {
+            printf("[PS4] -> Enviando Report 0x12 (Audio/Bateria)\n");
+            uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0x12));
+            std::memcpy(buffer, output_0x12, len);
+            return len;
+        }
+        // ====================================================================
+        else if (report_id == 0xA3)
         {
             printf("[PS4] -> Enviando Report 0xA3 (Version)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(output_0xa3));
@@ -350,7 +350,6 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
         }
     }
     
-    // Input Reports
     if (report_type == HID_REPORT_TYPE_INPUT)
     {
         uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
@@ -379,16 +378,14 @@ const uint16_t* PS4Device::get_descriptor_string_cb(uint8_t index, uint16_t lang
 {
     (void)langid;
     
-    // Index 0 es la tabla de idiomas
     if (index == 0)
     {
         static uint16_t lang_descriptor[2];
         lang_descriptor[0] = (0x03 << 8) | (2 * 1 + 2);
-        lang_descriptor[1] = 0x0409; // English (US)
+        lang_descriptor[1] = 0x0409;
         return lang_descriptor;
     }
     
-    // Índices 1-4: strings reales
     const char* value = reinterpret_cast<const char*>(PS4Dev::STRING_DESCRIPTORS[index]);
     return get_string_descriptor(value, index);
 }
