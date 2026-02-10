@@ -9,7 +9,7 @@
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 
 // --------------------------------------------------------------------------------
-// FUNCIÓN CRC32 (FIRMA DE SONY - CRÍTICO PARA WARZONE)
+// FUNCIÓN CRC32 (FIRMA DE SONY - PARA CUANDO WARZONE PIDA REPORT 0x11)
 // --------------------------------------------------------------------------------
 
 uint32_t calculate_ds4_crc32(uint8_t const *buffer, size_t len) {
@@ -155,6 +155,7 @@ void PS4Device::initialize()
     
     report_counter_ = 0;
     
+    // Inicializar Report 0x11 (se usará cuando Warzone lo pida vía get_report_cb)
     std::memset(&report_0x11_, 0, sizeof(report_0x11_));
     report_0x11_.reportID = 0x11;
     
@@ -296,40 +297,36 @@ void PS4Device::process(const uint8_t idx, Gamepad& gamepad)
     report_in_.buttonHome     = psPressed ? 1 : 0;
     report_in_.buttonTouchpad = sharePressed ? 1 : 0;
 
+    // Actualizar también el Report 0x11 para cuando Warzone lo pida
+    report_0x11_.reportID = 0x11;
+    report_0x11_.data[0] = 0x80; // Config
+    report_0x11_.data[1] = 0x20; // Flag requerido
+    
+    // Copiar datos del report_in_ (sin el ID)
+    std::memcpy(&report_0x11_.data[2], reinterpret_cast<uint8_t*>(&report_in_) + 1, 63);
+    
+    // Calcular CRC32 para el Report 0x11
+    uint8_t crc_buffer[75];
+    crc_buffer[0] = 0xA1;
+    std::memcpy(&crc_buffer[1], &report_0x11_, 74);
+    uint32_t final_crc = calculate_ds4_crc32(crc_buffer, 75);
+    std::memcpy(&report_0x11_.data[73], &final_crc, 4);
+
     if (tud_suspended())
     {
         tud_remote_wakeup();
     }
 
-    // ============ ENVÍO DEL REPORTE 0x11 CON CRC32 (WARZONE) ============
+    // ============ ENVIAR REPORT 0x01 (64 BYTES) PARA WINDOWS Y JUEGOS NORMALES ============
     if (tud_hid_ready())
     {
-        // 1. Preparamos el buffer de 78 bytes para el Reporte 0x11
-        uint8_t report11[78];
-        std::memset(report11, 0, sizeof(report11));
-
-        report11[0] = 0x11; // ID del reporte extendido
-        report11[1] = 0x80; // Configuración (0x80 activa los sensores)
-        report11[2] = 0x20; // Requerido por Warzone
-
-        // 2. Copiamos tus datos actuales (omitimos el ID 0x01 de report_in_)
-        // Copiamos los 63 bytes que vienen después del ID
-        std::memcpy(&report11[3], reinterpret_cast<uint8_t*>(&report_in_) + 1, 63);
-
-        // 3. Calculamos la firma CRC32 (Sony exige un seed de 0xA1)
-        uint8_t crc_buffer[75]; 
-        crc_buffer[0] = 0xA1; // Valor semilla
-        std::memcpy(&crc_buffer[1], report11, 74); // Seed + los primeros 74 bytes del reporte
-        
-        uint32_t final_crc = calculate_ds4_crc32(crc_buffer, 75);
-
-        // 4. Insertamos el CRC32 en los últimos 4 bytes
-        std::memcpy(&report11[74], &final_crc, 4);
-
-        // 5. ¡ENVIAMOS LOS 78 BYTES!
-        tud_hid_report(0, report11, 78);
+        tud_hid_report(
+            0, 
+            reinterpret_cast<uint8_t*>(&report_in_),
+            sizeof(PS4Dev::InReport)  // 64 bytes
+        );
     }
-    // =====================================================================
+    // =======================================================================================
 }
 
 // --------------------------------------------------------------------------------
@@ -388,14 +385,17 @@ uint16_t PS4Device::get_report_cb(uint8_t itf, uint8_t report_id,
     
     if (report_type == HID_REPORT_TYPE_INPUT)
     {
+        // ============ WARZONE PIDE REPORT 0x11 (78 BYTES CON CRC32) ============
         if (report_id == 0x11)
         {
-            printf("[PS4] -> Enviando Report 0x11 (Extended)\n");
+            printf("[PS4] -> Enviando Report 0x11 (Extended con CRC32)\n");
             uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport0x11));
             std::memcpy(buffer, &report_0x11_, len);
             return len;
         }
+        // ========================================================================
         
+        // Report 0x01 normal
         uint16_t len = std::min<uint16_t>(reqlen, sizeof(PS4Dev::InReport));
         std::memcpy(buffer, &report_in_, len);
         return len;
